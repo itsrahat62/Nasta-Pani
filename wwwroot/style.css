@@ -45,7 +45,7 @@
   --shadow-lg: 0 12px 46px rgba(40, 20, 50, .18);
   --shadow-brand: 0 8px 22px rgba(255, 106, 61, .32);
 
-  --tab-h: 68px;
+  --tab-h: 60px;
 
   --f-ui: 'Anek Bangla', 'Hind Siliguri', 'Noto Sans Bengali', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --f-display: 'Baloo Da 2', 'Anek Bangla', 'Hind Siliguri', system-ui, sans-serif;
@@ -160,6 +160,17 @@ a { color: var(--brand-ink); }
   backdrop-filter: blur(6px);
 }
 .avatar:active { transform: scale(.94); }
+
+/* নতুন অর্ডারের সংখ্যা */
+.badge {
+  position: absolute; top: -5px; right: -5px;
+  min-width: 20px; height: 20px; padding: 0 5px;
+  border-radius: 999px; background: #fff; color: var(--brand-ink);
+  font-family: var(--f-display); font-size: 12px; font-weight: 800;
+  display: grid; place-items: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .25);
+  animation: pop .3s cubic-bezier(.2, 1.4, .4, 1);
+}
 
 main { padding: 16px 15px 24px; }
 
@@ -543,3 +554,127 @@ table.tbl td.n, table.tbl th.n { text-align: right; font-family: var(--f-display
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* ==========================================================================
+   কমপ্যাক্ট — এক স্ক্রিনে যত বেশি সম্ভব, স্ক্রল যত কম সম্ভব
+   ========================================================================== */
+html, body { font-size: 15px; line-height: 1.5; }
+main { padding: 12px 12px 18px; }
+
+.topbar { padding: calc(env(safe-area-inset-top, 0px) + 12px) 14px 14px; border-radius: 0 0 20px 20px; }
+.topbar h1 { font-size: 17px; }
+.topbar .sub { font-size: 11.5px; }
+.avatar { width: 36px; height: 36px; border-radius: 12px; font-size: 15px; }
+
+.card { margin-bottom: 10px; border-radius: 18px; }
+.card-b { padding: 12px 13px; }
+.card-h { padding: 10px 13px; }
+.card-h h2 { font-size: 14.5px; }
+
+.section-title { margin: 14px 3px 7px; font-size: 13px; }
+.section-title::before { height: 14px; width: 4px; }
+
+.banner { padding: 9px 12px; font-size: 13.5px; margin-bottom: 10px; border-radius: 13px; }
+.banner .ic { font-size: 18px; }
+.banner small { font-size: 11.5px; }
+
+.item { padding: 8px 12px; gap: 10px; }
+.item .ava { width: 36px; height: 36px; border-radius: 12px; font-size: 18px; }
+.item .nm { font-size: 14.5px; }
+.item .pr { font-size: 12px; }
+.item.sub-line { padding-left: 20px; }
+
+.list-row { padding: 10px 12px; gap: 10px; }
+.list-row .ava { width: 34px; height: 34px; border-radius: 11px; font-size: 16px; }
+.list-row .nm { font-size: 14.5px; }
+.list-row .sub { font-size: 11.5px; }
+
+.stepper { border-radius: 13px; padding: 2px; }
+.stepper button { width: 31px; height: 31px; border-radius: 10px; font-size: 18px; }
+.stepper .q { min-width: 26px; font-size: 15.5px; }
+
+.btn { padding: 10px 14px; font-size: 14px; border-radius: 12px; }
+.btn.sm { padding: 6px 10px; font-size: 12.5px; border-radius: 10px; }
+.btn.lg { padding: 13px 16px; font-size: 15px; border-radius: 15px; }
+.btn-row { gap: 8px; }
+.btn-row.nowrap .btn { white-space: nowrap; font-size: 12px; padding: 8px 6px; }
+
+.field { margin-bottom: 11px; }
+.field label { font-size: 12.5px; margin-bottom: 4px; }
+.input, select.input, textarea.input { padding: 10px 12px; border-radius: 12px; }
+textarea.input { min-height: 52px; }
+.check { padding: 10px 12px; font-size: 14px; margin-bottom: 10px; }
+.hint { font-size: 12px; margin-top: 4px; }
+
+.hero { padding: 15px 16px; border-radius: 22px; margin-bottom: 11px; }
+.hero .val { font-size: 34px; }
+.hero .lbl { font-size: 12.5px; }
+.hero .sub { font-size: 12px; }
+.stats { gap: 9px; margin-bottom: 11px; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); }
+.stat { padding: 11px 13px; border-radius: 17px; }
+.stat .val { font-size: 22px; }
+.stat .lbl { font-size: 11.5px; }
+
+.totalbar { padding: 9px 9px 9px 16px; border-radius: 22px; margin-top: 12px; }
+.totalbar .t b { font-size: 21px; }
+.totalbar .t small { font-size: 11.5px; }
+
+.tabbar { padding: 5px 5px calc(env(safe-area-inset-bottom, 0px) + 5px); }
+.tabbar button { font-size: 10.5px; padding: 5px 2px 4px; border-radius: 13px; }
+.tabbar button .ic { font-size: 19px; }
+
+.buy-row { padding: 10px 12px; gap: 11px; margin-bottom: 7px; border-radius: 14px; }
+.buy-qty { min-width: 44px; height: 44px; border-radius: 14px; font-size: 19px; }
+.buy-nm { font-size: 14.5px; }
+.buy-sub { font-size: 11.5px; }
+.buy-fb { font-size: 11.5px; padding: 5px 8px; margin-top: 5px; }
+.buy-total { padding: 12px 15px; font-size: 14px; }
+.buy-total b { font-size: 23px; }
+
+.empty { padding: 32px 18px; font-size: 14px; }
+.empty .big { font-size: 38px; margin-bottom: 7px; }
+table.tbl { font-size: 13px; }
+table.tbl th, table.tbl td { padding: 7px 6px; }
+.sheet-b { padding: 13px 13px 18px; }
+.sheet-h { padding: 13px 15px 11px; }
+.sheet-h h3 { font-size: 16.5px; }
+
+/* ---- দোকান ধরে লাইভ টোটাল: এক নজরে, স্ক্রল ছাড়াই ---- */
+.live { border-radius: 18px; overflow: hidden; margin-bottom: 10px; box-shadow: var(--shadow-s); }
+.live-h {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 13px; color: #fff; background: var(--accent-grad);
+  font-weight: 700; font-size: 14px;
+}
+.live-h .n { margin-left: auto; font-family: var(--f-display); font-size: 15px; }
+.live-b { background: var(--card); padding: 9px 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+.tile {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--accent-soft); color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: 11px; padding: 5px 9px; font-size: 13px; font-weight: 600;
+}
+.tile b {
+  font-family: var(--f-display); font-size: 15px; font-weight: 800;
+  color: var(--accent); min-width: 16px; text-align: right;
+}
+.tile .o { font-size: 11.5px; color: var(--muted); font-weight: 600; }
+
+/* এক লাইনে একজনের অর্ডার — তালিকা ছোট রাখে */
+.person {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 12px; border-bottom: 1px solid var(--line-soft); cursor: pointer;
+}
+.person:last-child { border-bottom: 0; }
+.person .pin {
+  min-width: 42px; height: 30px; border-radius: 9px;
+  background: var(--accent-soft); color: var(--accent);
+  display: grid; place-items: center;
+  font-family: var(--f-display); font-weight: 800; font-size: 13px;
+}
+.person .nm { font-weight: 600; font-size: 14.5px; }
+.person .sub { font-size: 11.5px; color: var(--muted); }
+.dotmark { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.dotmark.warn { background: var(--warn); }
+.dotmark.info { background: var(--info); }
+.dotmark.ok { background: var(--ok); }

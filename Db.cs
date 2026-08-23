@@ -35,6 +35,10 @@ IF OBJECT_ID(N'dbo.users', N'U') IS NULL
 CREATE TABLE dbo.users (
   id            INT IDENTITY(1,1) PRIMARY KEY,
   name          NVARCHAR(100)  NOT NULL,
+  pin           NVARCHAR(20)   NULL,          -- প্রত্যেকের আলাদা; এটা দিয়েই লগইন
+  floor         INT            NULL,          -- কোন তলার; সুপার অ্যাডমিনের জন্য NULL = সব তলা
+  default_shop_id INT          NULL,          -- শেষবার যে দোকান থেকে নিয়েছিলেন
+  usual_json    NVARCHAR(MAX)  NULL,          -- রোজকার বাঁধা অর্ডার (এক চাপে বসে যায়)
   password_hash NVARCHAR(200)  NOT NULL,
   role          NVARCHAR(20)   NOT NULL CONSTRAINT DF_users_role DEFAULT 'user',
   active        BIT            NOT NULL CONSTRAINT DF_users_active DEFAULT 1,
@@ -69,6 +73,25 @@ CREATE TABLE dbo.item_options (
   name        NVARCHAR(60)  NOT NULL,
   price_delta DECIMAL(10,2) NOT NULL CONSTRAINT DF_opt_delta DEFAULT 0,
   sort_order  INT           NOT NULL CONSTRAINT DF_opt_sort DEFAULT 100
+);
+
+-- যে দোকান/হোটেল থেকে আনা হয় (স্টার, প্রিন্স হোটেল…)
+IF OBJECT_ID(N'dbo.shops', N'U') IS NULL
+CREATE TABLE dbo.shops (
+  id         INT IDENTITY(1,1) PRIMARY KEY,
+  name       NVARCHAR(100) NOT NULL,
+  active     BIT NOT NULL CONSTRAINT DF_shop_active DEFAULT 1,
+  sort_order INT NOT NULL CONSTRAINT DF_shop_sort DEFAULT 100
+);
+
+-- একই জিনিসের দোকানভেদে দাম; এখানে না থাকলে items.price ধরা হয়
+IF OBJECT_ID(N'dbo.item_prices', N'U') IS NULL
+CREATE TABLE dbo.item_prices (
+  item_id   INT NOT NULL,
+  shop_id   INT NOT NULL,
+  price     DECIMAL(10,2) NOT NULL,
+  available BIT NOT NULL CONSTRAINT DF_ip_avail DEFAULT 1,   -- 0 = এই দোকানে এটা পাওয়া যায় না
+  CONSTRAINT PK_item_prices PRIMARY KEY (item_id, shop_id)
 );
 
 IF OBJECT_ID(N'dbo.orders', N'U') IS NULL
@@ -121,9 +144,12 @@ CREATE TABLE dbo.settings (
   value NVARCHAR(200) NOT NULL
 );
 
+-- প্রতি তলার নিজের অবস্থা — একই দিনে ২য় তলা আর ৩য় তলার খবর আলাদা
 IF OBJECT_ID(N'dbo.day_status', N'U') IS NULL
 CREATE TABLE dbo.day_status (
-  day        NVARCHAR(10)  PRIMARY KEY,
+  id         INT IDENTITY(1,1) PRIMARY KEY,
+  floor      INT           NOT NULL CONSTRAINT DF_ds_floor DEFAULT 0,
+  day        NVARCHAR(10)  NOT NULL,
   status     NVARCHAR(20)  NOT NULL CONSTRAINT DF_ds_status DEFAULT 'open',
   message    NVARCHAR(200) NOT NULL CONSTRAINT DF_ds_msg DEFAULT N'',
   updated_by INT NULL,
@@ -133,26 +159,75 @@ CREATE TABLE dbo.day_status (
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_orders_date' AND object_id = OBJECT_ID(N'dbo.orders'))
 CREATE INDEX IX_orders_date ON dbo.orders(order_date);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_day_status' AND object_id = OBJECT_ID(N'dbo.day_status'))
+CREATE UNIQUE INDEX UX_day_status ON dbo.day_status(day, floor);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_lines_order' AND object_id = OBJECT_ID(N'dbo.order_lines'))
 CREATE INDEX IX_lines_order ON dbo.order_lines(order_id);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ledger_user' AND object_id = OBJECT_ID(N'dbo.ledger'))
 CREATE INDEX IX_ledger_user ON dbo.ledger(user_id);
 ";
 
+    /// <summary>পুরোনো ডেটাবেজেও নতুন কলাম/ইনডেক্স যোগ করে (বারবার চালালেও সমস্যা নেই)।</summary>
+    private static readonly string[] MIGRATIONS =
+    {
+        // প্রত্যেকের আলাদা PIN — এটা দিয়েই লগইন
+        "IF COL_LENGTH('dbo.users', 'pin') IS NULL ALTER TABLE dbo.users ADD pin NVARCHAR(20) NULL;",
+        "UPDATE dbo.users SET pin = CAST(1000 + id AS NVARCHAR(20)) WHERE pin IS NULL;",
+        @"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_users_pin' AND object_id = OBJECT_ID(N'dbo.users'))
+          CREATE UNIQUE INDEX UX_users_pin ON dbo.users(pin) WHERE pin IS NOT NULL;",
+        // অফিস-জোড়া রেজিস্ট্রেশন PIN আর লাগে না
+        "DELETE FROM dbo.settings WHERE [key] = 'register_pin';",
+
+        // কিছু না বাছলে কোন রকমটা ধরা হবে (যেমন পরোটা → তেল দিয়ে)
+        @"IF COL_LENGTH('dbo.item_options', 'is_default') IS NULL
+          ALTER TABLE dbo.item_options ADD is_default BIT NOT NULL CONSTRAINT DF_opt_default DEFAULT 0;",
+
+        // অর্ডার কোন দোকান থেকে
+        "IF COL_LENGTH('dbo.orders', 'shop_id') IS NULL ALTER TABLE dbo.orders ADD shop_id INT NULL;",
+        @"IF COL_LENGTH('dbo.orders', 'shop_name') IS NULL
+          ALTER TABLE dbo.orders ADD shop_name NVARCHAR(100) NOT NULL CONSTRAINT DF_ord_shop DEFAULT N'';",
+
+        // ---- তলা (floor) ----
+        "IF COL_LENGTH('dbo.users', 'floor') IS NULL ALTER TABLE dbo.users ADD floor INT NULL;",
+
+        // কোনো জিনিস কোনো দোকানে নেই — সেটা এখানে বলা থাকে
+        @"IF COL_LENGTH('dbo.item_prices', 'available') IS NULL
+          ALTER TABLE dbo.item_prices ADD available BIT NOT NULL CONSTRAINT DF_ip_avail_mig DEFAULT 1;",
+
+        // ---- ক্লিক কমাতে: শেষবার যে দোকান, আর রোজকার বাঁধা অর্ডার ----
+        "IF COL_LENGTH('dbo.users', 'default_shop_id') IS NULL ALTER TABLE dbo.users ADD default_shop_id INT NULL;",
+        "IF COL_LENGTH('dbo.users', 'usual_json') IS NULL ALTER TABLE dbo.users ADD usual_json NVARCHAR(MAX) NULL;",
+        @"IF COL_LENGTH('dbo.day_status', 'floor') IS NULL
+          ALTER TABLE dbo.day_status ADD floor INT NOT NULL CONSTRAINT DF_ds_floor_mig DEFAULT 0;",
+        // পুরোনো day_status-এ day ছিল প্রাইমারি কি — এখন (day, floor) মিলে ইউনিক
+        @"DECLARE @pk NVARCHAR(200);
+          SELECT @pk = kc.name
+            FROM sys.key_constraints kc
+           WHERE kc.parent_object_id = OBJECT_ID(N'dbo.day_status') AND kc.type = 'PK'
+             AND EXISTS (SELECT 1 FROM sys.index_columns ic
+                           JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+                          WHERE ic.object_id = kc.parent_object_id
+                            AND ic.index_id = kc.unique_index_id AND c.name = 'day');
+          IF @pk IS NOT NULL EXEC('ALTER TABLE dbo.day_status DROP CONSTRAINT [' + @pk + ']');",
+        @"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_day_status' AND object_id = OBJECT_ID(N'dbo.day_status'))
+          CREATE UNIQUE INDEX UX_day_status ON dbo.day_status(day, floor);",
+    };
+
     private static void EnsureSchema()
     {
         using var c = Open();
         foreach (var batch in SCHEMA.Split("\nGO", StringSplitOptions.RemoveEmptyEntries))
             c.Execute(batch);
+        foreach (var m in MIGRATIONS) c.Execute(m);
     }
 
     // ---------------------------------------------------------- সেটিংস
     public static readonly Dictionary<string, string> DefaultSettings = new()
     {
-        ["office_name"]  = "আমাদের অফিস",
-        ["register_pin"] = "1234",
-        ["cutoff_time"]  = "09:30",
-        ["money_module"] = "1",
+        ["office_name"]    = "আমাদের অফিস",
+        ["money_module"]   = "1",
+        ["allow_register"] = "1",         // নতুন কেউ নিজে রেজিস্ট্রেশন করতে পারবে কি না
+        ["floors"]         = "2,3,4,5",   // অফিসের যে তলাগুলো আছে
     };
 
     public static Dictionary<string, string> GetSettings()
@@ -186,26 +261,46 @@ CREATE INDEX IX_ledger_user ON dbo.ledger(user_id);
 
         if (c.ExecuteScalar<int>("SELECT COUNT(*) FROM dbo.users") == 0)
         {
+            // সুপার অ্যাডমিন — সব তলা দেখতে পান (floor = NULL)
             c.Execute(
-                "INSERT INTO dbo.users(name, password_hash, role, created_at) VALUES(@n, @p, 'super_admin', @t)",
-                new { n = "admin", p = BCrypt.Net.BCrypt.HashPassword("123456"), t = Stamp() });
-            Console.WriteLine("✅ প্রথম অ্যাডমিন — নাম: admin / পাসওয়ার্ড: 123456");
+                "INSERT INTO dbo.users(name, pin, password_hash, role, floor, created_at) VALUES(@n, @pin, @p, 'super_admin', NULL, @t)",
+                new { n = "admin", pin = "1000", p = BCrypt.Net.BCrypt.HashPassword("admin@123"), t = Stamp() });
+            Console.WriteLine("✅ সুপার অ্যাডমিন — admin / পাসওয়ার্ড: admin@123");
+        }
+
+        // অফিসের স্টাফ — একবারই তৈরি হয়। ইনি নিজে পরে পাসওয়ার্ড বদলে নিতে পারবেন।
+        if (c.ExecuteScalar<int>("SELECT COUNT(*) FROM dbo.users WHERE pin = '4800' OR name = N'Yeasin'") == 0)
+        {
+            c.Execute(
+                "INSERT INTO dbo.users(name, pin, password_hash, role, floor, created_at) VALUES(@n, @pin, @p, 'staff', 2, @t)",
+                new { n = "Yeasin", pin = "4800", p = BCrypt.Net.BCrypt.HashPassword("1234@4321"), t = Stamp() });
+            Console.WriteLine("✅ স্টাফ — Yeasin / PIN: 4800 / পাসওয়ার্ড: 1234@4321 / ২য় তলা");
+        }
+
+        if (c.ExecuteScalar<int>("SELECT COUNT(*) FROM dbo.shops") == 0)
+        {
+            foreach (var (n, i) in new[] { "Hotel Star", "Prince Hotel" }.Select((n, i) => (n, i)))
+                c.Execute("INSERT INTO dbo.shops(name, sort_order) VALUES(@n, @s)", new { n, s = (i + 1) * 10 });
+            Console.WriteLine("✅ দুটো দোকান যোগ হলো — Hotel Star, Prince Hotel");
         }
 
         if (c.ExecuteScalar<int>("SELECT COUNT(*) FROM dbo.items") == 0)
         {
-            (string name, decimal price, string cat, (string n, decimal d)[] opts)[] seed =
+            // opts: (নাম, দামের হেরফের, এটাই ডিফল্ট কি না)
+            (string name, decimal price, string cat, (string n, decimal d, bool def)[] opts)[] seed =
             {
-                ("সিঙ্গারা",   10, "নাস্তা", Array.Empty<(string, decimal)>()),
-                ("সমুচা",      12, "নাস্তা", Array.Empty<(string, decimal)>()),
-                ("পুরি",        8, "নাস্তা", Array.Empty<(string, decimal)>()),
-                ("পরোটা",      15, "নাস্তা", Array.Empty<(string, decimal)>()),
-                ("ডাল",        20, "নাস্তা", Array.Empty<(string, decimal)>()),
-                ("সবজি ভাজি",  25, "নাস্তা", Array.Empty<(string, decimal)>()),
-                ("ডিম",        25, "নাস্তা", new[] { ("ভাজি", 0m), ("পোচ", 0m), ("সিদ্ধ", 0m), ("ওমলেট", 5m) }),
-                ("চা",         10, "পানীয়", new[] { ("দুধ চা", 0m), ("রঙ চা", -3m), ("চিনি ছাড়া", 0m) }),
-                ("কফি",        20, "পানীয়", Array.Empty<(string, decimal)>()),
-                ("পানি (৫০০ মি.লি.)", 20, "পানীয়", Array.Empty<(string, decimal)>()),
+                ("সিঙ্গারা",   10, "নাস্তা", Array.Empty<(string, decimal, bool)>()),
+                ("সমুচা",      12, "নাস্তা", Array.Empty<(string, decimal, bool)>()),
+                ("পুরি",        8, "নাস্তা", Array.Empty<(string, decimal, bool)>()),
+                ("পরোটা",      15, "নাস্তা", new[] { ("তেল দিয়ে", 0m, true), ("তেল ছাড়া", 0m, false) }),
+                ("বুটের ডাল",       20, "ডাল ও ভাজি", Array.Empty<(string, decimal, bool)>()),
+                ("ডাল ভাজি মিক্সড", 25, "ডাল ও ভাজি", Array.Empty<(string, decimal, bool)>()),
+                ("মুগ ডাল",         22, "ডাল ও ভাজি", Array.Empty<(string, decimal, bool)>()),
+                ("সবজি ভাজি",       25, "ডাল ও ভাজি", Array.Empty<(string, decimal, bool)>()),
+                ("ডিম",        25, "নাস্তা", new[] { ("ভাজি", 0m, true), ("পোচ", 0m, false), ("সিদ্ধ", 0m, false), ("ওমলেট", 5m, false) }),
+                ("চা",         10, "পানীয়", new[] { ("দুধ চা", 0m, true), ("রঙ চা", -3m, false), ("চিনি ছাড়া", 0m, false) }),
+                ("কফি",        20, "পানীয়", Array.Empty<(string, decimal, bool)>()),
+                ("পানি (৫০০ মি.লি.)", 20, "পানীয়", Array.Empty<(string, decimal, bool)>()),
             };
 
             for (int i = 0; i < seed.Length; i++)
@@ -218,8 +313,9 @@ CREATE INDEX IX_ledger_user ON dbo.ledger(user_id);
 
                 for (int j = 0; j < s.opts.Length; j++)
                     c.Execute(
-                        "INSERT INTO dbo.item_options(item_id, name, price_delta, sort_order) VALUES(@i, @n, @d, @s)",
-                        new { i = id, n = s.opts[j].n, d = s.opts[j].d, s = (j + 1) * 10 });
+                        @"INSERT INTO dbo.item_options(item_id, name, price_delta, sort_order, is_default)
+                          VALUES(@i, @n, @d, @s, @def)",
+                        new { i = id, n = s.opts[j].n, d = s.opts[j].d, s = (j + 1) * 10, def = s.opts[j].def });
             }
             Console.WriteLine("✅ ডেমো মেনু যোগ হলো");
         }
