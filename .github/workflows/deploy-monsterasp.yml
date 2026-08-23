@@ -1,0 +1,125 @@
+name: Deploy to MonsterASP
+
+# main-এ push করলেই সাইট লাইভ হয়ে যাবে।
+# IIS চালু থাকলে NastaOrder.dll লক থাকে — তাই আগে app_offline.htm তুলে অ্যাপ থামানো হয়,
+# ফাইল আপলোডের পর সেটা মুছে দিলে অ্যাপ আবার চালু হয়।
+#
+# দরকারি GitHub Secrets (Settings → Secrets and variables → Actions):
+#   MONSTERASP_FTP_HOST      যেমন  siteXXXXX.siteasp.net
+#   MONSTERASP_FTP_USER      যেমন  siteXXXXX
+#   MONSTERASP_FTP_PASSWORD  MonsterASP প্যানেলের FTP পাসওয়ার্ড
+#   NASTA_DB (ঐচ্ছিক)        MSSQL কানেকশন স্ট্রিং। দিলে প্রতি ডিপ্লয়ে
+#                            appsettings.Production.json বানিয়ে পাঠাবে।
+#                            না দিলে সার্ভারে আগে থেকে রাখা ফাইলটাই থাকবে।
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: monsterasp-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish (Release)
+        run: dotnet publish NastaOrder.csproj -c Release -o publish
+
+      - name: Install lftp
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
+
+      - name: Check secrets
+        env:
+          FTP_HOST: ${{ secrets.MONSTERASP_FTP_HOST }}
+          FTP_USER: ${{ secrets.MONSTERASP_FTP_USER }}
+          FTP_PASS: ${{ secrets.MONSTERASP_FTP_PASSWORD }}
+        run: |
+          for v in FTP_HOST FTP_USER FTP_PASS; do
+            if [ -z "${!v}" ]; then echo "::error::MONSTERASP_$v secret is not set"; exit 1; fi
+          done
+
+      - name: Stop app (upload app_offline.htm so IIS releases the DLL)
+        env:
+          FTP_HOST: ${{ secrets.MONSTERASP_FTP_HOST }}
+          FTP_USER: ${{ secrets.MONSTERASP_FTP_USER }}
+          FTP_PASS: ${{ secrets.MONSTERASP_FTP_PASSWORD }}
+        run: |
+          cat > app_offline.htm <<'HTML'
+          <!doctype html><html lang="bn"><head><meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>আপডেট চলছে</title></head>
+          <body style="font-family:system-ui,sans-serif;text-align:center;padding:70px 24px;color:#1d1722;background:#fdf7f2">
+          <div style="font-size:52px">🍵</div>
+          <h2>আপডেট চলছে — এক মিনিট পরে আবার আসুন</h2>
+          </body></html>
+          HTML
+          curl -s --ftp-create-dirs -T app_offline.htm \
+            "ftp://$FTP_HOST/wwwroot/app_offline.htm" --user "$FTP_USER:$FTP_PASS"
+          sleep 5
+
+      - name: Upload app files
+        env:
+          FTP_HOST: ${{ secrets.MONSTERASP_FTP_HOST }}
+          FTP_USER: ${{ secrets.MONSTERASP_FTP_USER }}
+          FTP_PASS: ${{ secrets.MONSTERASP_FTP_PASSWORD }}
+        run: |
+          lftp -u "$FTP_USER,$FTP_PASS" "ftp://$FTP_HOST" -e "
+            set ftp:ssl-allow no; set net:timeout 25; set net:max-retries 3;
+            set mirror:parallel-transfer-count 4;
+            mirror -R --ignore-time --no-perms \
+              --exclude-glob appsettings.Production.json \
+              --exclude-glob app_offline.htm \
+              --exclude logs/ \
+              publish /wwwroot;
+            bye"
+
+      # কানেকশন স্ট্রিং সিক্রেট দেওয়া থাকলে সেটাই পাঠাও, না দিলে সার্ভারেরটা অটুট থাকে
+      - name: Write production settings (only if NASTA_DB secret is set)
+        env:
+          FTP_HOST: ${{ secrets.MONSTERASP_FTP_HOST }}
+          FTP_USER: ${{ secrets.MONSTERASP_FTP_USER }}
+          FTP_PASS: ${{ secrets.MONSTERASP_FTP_PASSWORD }}
+          NASTA_DB: ${{ secrets.NASTA_DB }}
+        run: |
+          if [ -z "$NASTA_DB" ]; then
+            echo "NASTA_DB সিক্রেট নেই — সার্ভারে রাখা appsettings.Production.json অটুট থাকল"
+            exit 0
+          fi
+          python3 - <<'PY' > appsettings.Production.json
+          import json, os
+          print(json.dumps({"ConnectionStrings": {"Default": os.environ["NASTA_DB"]}}, indent=2))
+          PY
+          curl -s -T appsettings.Production.json \
+            "ftp://$FTP_HOST/wwwroot/appsettings.Production.json" --user "$FTP_USER:$FTP_PASS"
+          echo "✅ appsettings.Production.json পাঠানো হলো"
+
+      - name: Start app (remove app_offline.htm)
+        if: always()
+        env:
+          FTP_HOST: ${{ secrets.MONSTERASP_FTP_HOST }}
+          FTP_USER: ${{ secrets.MONSTERASP_FTP_USER }}
+          FTP_PASS: ${{ secrets.MONSTERASP_FTP_PASSWORD }}
+        run: |
+          curl -s "ftp://$FTP_HOST/wwwroot/" --user "$FTP_USER:$FTP_PASS" \
+            -Q "-DELE /wwwroot/app_offline.htm" || true
+          echo "✅ app_offline.htm সরানো হলো — অ্যাপ আবার চালু হচ্ছে"
+
+      - name: Warm up
+        if: always()
+        continue-on-error: true
+        env:
+          FTP_USER: ${{ secrets.MONSTERASP_FTP_USER }}
+        run: |
+          sleep 12
+          curl -sS -o /dev/null -w "warm-up: %{http_code}\n" \
+            "https://${FTP_USER}.runasp.net/" --max-time 60 || true

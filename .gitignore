@@ -1,0 +1,15 @@
+bin/
+obj/
+logs/
+publish/
+*.user
+*.suo
+.vs/
+
+# আসল কানেকশন স্ট্রিং / পাসওয়ার্ড কখনো রিপোতে যাবে না
+appsettings.Development.json
+appsettings.Production.json
+appsettings.Local.json
+*.pubxml
+*.PublishSettings
+secrets.json
