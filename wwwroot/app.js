@@ -508,6 +508,9 @@ function paintOrder() {
       ${locked ? `<span class="chip">লক করা</span>` :
         `<button class="btn primary" data-act="save" ${S.dirty ? '' : 'disabled'}>${S.dirty ? 'সেভ করুন' : 'সেভ করা আছে ✓'}</button>`}
     </div>` : ''}
+    ${S.orderFor && S.boot.money_module ? `<button class="btn block" data-act="takecash"
+      data-id="${S.orderFor.id}" data-name="${esc(S.orderFor.name)}" style="margin-top:10px">
+      💵 হাতে টাকা দিলেন? লিখে রাখুন</button>` : ''}
     ${count > 0 && !locked ? `<button class="btn block" data-act="usualsave" style="margin-top:10px">⭐ ${S.orderFor ? `${esc(S.orderFor.name)}-এর রোজকার অর্ডার করে রাখুন` : 'এটাই আমার রোজকার অর্ডার করে রাখুন'}</button>` : ''}
     ${S.orderMeta.order && !locked ? `<button class="btn danger block" data-act="delorder" style="margin-top:10px">আজকের অর্ডার বাতিল করুন</button>` : ''}
     ${S.orderFor ? `<button class="btn block" data-act="orderforclear" style="margin-top:10px">← আজকের তালিকায় ফিরুন</button>` : ''}
@@ -897,7 +900,8 @@ async function viewToday() {
 
     <div class="btn-row nowrap" style="gap:6px">
       <button class="btn primary sm" data-act="buylist">🛒 কিনতে হবে</button>
-      <button class="btn sm" data-act="buylist" data-tab="plate">🍽️ কে কী পাবে</button>
+      <button class="btn sm" data-act="buylist" data-tab="plate">🍽️ সাজানো</button>
+      ${S.boot.money_module ? `<button class="btn sm" data-act="buylist" data-tab="money">💵 টাকা</button>` : ''}
       <button class="btn sm" data-act="orderfor" title="কারো হয়ে অর্ডার">🧑‍🍳 কারো হয়ে</button>
       <button class="btn sm ${offItems.length ? 'danger' : ''}" data-act="availsheet"
         title="আজ কী নেই">🚫${offItems.length ? ` ${bn(offItems.length)}` : ''}</button>
@@ -1001,38 +1005,169 @@ function fbTextOf(l) {
   return l.fallback_note ? `${base} · ${l.fallback_note}` : base;
 }
 
-/** স্টাফ কার হয়ে অর্ডার করবেন — তালিকা থেকে বেছে নিন */
-function orderForSheet() {
-  const list = (S.cache.users || []).filter((u) => u.active && u.role === 'user');
+/** অর্ডার নেওয়ার সময় হাতে যত টাকা দিল — এক চাপে লিখে রাখা */
+function takeCashSheet(userId, name, back = '') {
   sheet({
-    title: '🧑‍🍳 কার হয়ে অর্ডার করবেন?',
-    body: list.length === 0
-      ? `<div class="empty"><div class="big">👥</div>এই তলায় এখনো কোনো ইউজার নেই</div>`
-      : `<div class="card"><div class="card-b tight">
-          ${list.map((u) => `<div class="list-row" data-act="orderforpick" data-id="${u.id}"
-              data-name="${esc(u.name)}" style="cursor:pointer;${accent(hashIdx(u.name))}">
-            <div class="ava">${esc((u.name || '?').trim()[0])}</div>
-            <div class="grow"><div class="nm">${esc(u.name)}</div>
-              <div class="sub">PIN ${bn(u.pin || '—')}${u.floor ? ` · ${bn(u.floor)}য় তলা` : ''}</div></div>
-            <span class="go">›</span>
-          </div>`).join('')}
-        </div></div>
-        <p class="hint center">কেউ মুখে বললেও আপনি তার হয়ে অর্ডার বসিয়ে দিতে পারবেন।<br>
-          তার রোজকার অর্ডার থাকলে এক চাপেই বসে যাবে।</p>`,
+    title: `💵 ${esc(name)} কত দিলেন?`,
+    body: `
+      <div class="chip-row" style="margin-bottom:12px">
+        ${[20, 50, 100, 200, 500, 1000].map((v) =>
+          `<button class="btn" data-act="cashnow" data-id="${userId}" data-name="${esc(name)}"
+            data-back="${back}" data-amt="${v}" style="flex:1 1 28%">${tk(v)}</button>`).join('')}
+      </div>
+      <div class="field" style="margin:0"><label>অন্য অঙ্ক</label>
+        <input class="input" id="cashamt" type="number" inputmode="decimal" placeholder="যেমন ৩৫০" /></div>
+      <div class="hint">৫০ টাকার নাস্তায় কেউ ১০০ দিলে পুরো ১০০-ই লিখুন —
+        নাস্তা দেওয়ার সময় বাকি ৫০ ফেরতের হিসাব নিজে থেকেই দেখাবে।</div>`,
+    footer: `<button class="btn primary block" data-act="cashnow" data-id="${userId}"
+      data-back="${back}" data-name="${esc(name)}">লিখে রাখুন</button>`,
+    onOpen: () => setTimeout(() => $('#cashamt')?.focus(), 120),
   });
 }
 
-/** বাজারের লিস্ট ও প্লেট সাজানোর তালিকা — দুই ট্যাবে */
+/** রোজকার অর্ডারটা পড়ার মতো করে লেখা (আইটেমের নামসহ) */
+function usualTextOf(usual) {
+  const out = (usual?.lines || []).map((l) => {
+    const it = S.items.find((i) => i.id === l.item_id);
+    if (!it) return null;
+    const op = it.options.find((o) => o.id === l.option_id);
+    return `${it.name}${op ? ` (${op.name})` : ''} ×${bn(l.qty)}`;
+  }).filter(Boolean);
+  return out.join(', ');
+}
+
+/**
+ * কেউ মুখে বললে — PIN বা নাম লিখে খুঁজুন, তারপর ⚡ চাপলেই তার রোজকার অর্ডার বসে যাবে।
+ * অন্য কিছু বললে নামে চাপ দিয়ে তার হয়ে পুরো অর্ডারটা সাজিয়ে দিন।
+ */
+async function orderForSheet() {
+  const d = await api(`/api/quick-users?date=${S.date}${fq()}`);
+  S.cache.quick = d.users;
+
+  sheet({
+    title: '🧑‍🍳 কার হয়ে অর্ডার?',
+    body: `
+      <input class="input" id="qsearch" inputmode="search" autocomplete="off"
+        placeholder="🔎 PIN বা নাম লিখুন — যেমন ২১০১ বা রাহাত" />
+      <div id="qlist" style="margin-top:10px"></div>`,
+    footer: `<button class="btn block" data-act="closesheet">বন্ধ করুন</button>`,
+    onOpen: () => {
+      paintQuickList('');
+      const s = $('#qsearch');
+      s.addEventListener('input', () => paintQuickList(s.value.trim()));
+      setTimeout(() => s.focus(), 120);
+    },
+  });
+}
+
+function paintQuickList(q) {
+  const all = S.cache.quick || [];
+  const list = q
+    ? all.filter((u) => String(u.name).toLowerCase().includes(q.toLowerCase()) ||
+                        String(u.pin || '').includes(q))
+    : all;
+
+  $('#qlist').innerHTML = list.length === 0
+    ? `<div class="empty"><div class="big">🔎</div>${q ? 'কাউকে পাওয়া গেল না' : 'এই তলায় এখনো কোনো ইউজার নেই'}</div>`
+    : `<div class="card"><div class="card-b tight">
+        ${list.map((u) => {
+          const ut = usualTextOf(u.usual);
+          return `<div class="person" data-act="orderforpick" data-id="${u.id}"
+              data-name="${esc(u.name)}" style="${accent(hashIdx(u.name))}">
+            <div class="pin">${bn(u.pin || '—')}</div>
+            <div style="flex:1;min-width:0">
+              <div class="nm">${esc(u.name)}
+                ${u.order_id ? `<span class="chip ok">আজ দিয়েছেন · ${bn(u.qty)} টি</span>` : ''}</div>
+              <div class="sub">${ut ? `⚡ ${esc(ut)}` : 'রোজকার অর্ডার সেভ করা নেই'}</div>
+              ${S.boot.money_module && Number(u.balance) ? `<div class="sub" style="color:${
+                Number(u.balance) > 0 ? 'var(--ok)' : 'var(--warn)'}">💵 ${
+                Number(u.balance) > 0 ? `জমা আছে ${tk(u.balance)}` : `পাওনা ${tk(-u.balance)}`}</div>` : ''}
+            </div>
+            ${S.boot.money_module ? `<button class="btn sm" data-act="takecash" data-id="${u.id}"
+              data-name="${esc(u.name)}" title="হাতে টাকা দিলে লিখে রাখুন">💵</button>` : ''}
+            ${ut ? `<button class="btn sm primary" data-act="quickplace" data-id="${u.id}"
+              data-name="${esc(u.name)}" title="রোজকার অর্ডারটা বসিয়ে দিন">⚡</button>` : ''}
+            <span class="go">›</span>
+          </div>`;
+        }).join('')}
+      </div></div>
+      <p class="hint center">⚡ চাপলেই তার রোজকার অর্ডার বসে যাবে।<br>
+        অন্য কিছু চাইলে নামে চাপ দিয়ে সাজিয়ে দিন।</p>`;
+}
+
+/** পপআপের তিন ট্যাব — কিনতে হবে / কে কী পাবে / আজকের টাকা */
+function sheetTabs(active) {
+  const t = [
+    ['buy', '🛒 কিনতে হবে'],
+    ['plate', '🍽️ কে কী পাবে'],
+    ...(S.boot.money_module ? [['money', '💵 আজকের টাকা']] : []),
+  ];
+  return `<div class="tabs2" style="margin-bottom:12px">
+    ${t.map(([k, label]) => k === active
+      ? `<button class="on">${label}</button>`
+      : `<button data-act="buylist" data-tab="${k}">${label}</button>`).join('')}
+  </div>`;
+}
+
+/**
+ * আজকের টাকার হিসাব — কাকে কত ফেরত দিতে হবে, কার কাছে কত পাওনা।
+ * ৫০ টাকার নাস্তায় কেউ ১০০ দিলে এখানেই ৫০ ফেরত দেওয়া যায়।
+ */
+async function moneyTodaySheet() {
+  const d = await api(`/api/money-today?date=${S.date}${fq()}`);
+  S.cache.money = d;
+  sheet({
+    title: '💵 আজকের টাকার হিসাব',
+    body: `${sheetTabs('money')}<div id="moneybody"></div>`,
+    footer: `<div class="btn-row">
+      <button class="btn" data-act="printsheet">🖨️ প্রিন্ট</button>
+      <button class="btn primary" data-act="closesheet">বুঝেছি</button>
+    </div>`,
+    onOpen: () => paintMoneyToday(),
+  });
+}
+
+function paintMoneyToday() {
+  const d = S.cache.money;
+  if (!d || !$('#moneybody')) return;
+
+  const row = (u, kind) => `<div class="person" style="${accent(hashIdx(u.name))}">
+    <div class="pin">${bn(u.pin || '—')}</div>
+    <div style="flex:1;min-width:0">
+      <div class="nm">${esc(u.name)}</div>
+      <div class="sub">${Number(u.order_total) ? `নাস্তা ${tk(u.order_total)}` : 'আজ অর্ডার নেই'}${
+        Number(u.paid_today) ? ` · দিয়েছেন ${tk(u.paid_today)}` : ''}${
+        Number(u.returned_today) ? ` · ফেরত ${tk(u.returned_today)}` : ''}</div>
+    </div>
+    ${kind === 'give'
+      ? `<button class="btn sm ok" data-act="moneyrefund" data-id="${u.id}" data-amt="${u.to_return}"
+          data-name="${esc(u.name)}">💵 ${tk(u.to_return)} ফেরত</button>`
+      : `<button class="btn sm" data-act="takecash" data-back="money" data-id="${u.id}"
+          data-name="${esc(u.name)}">💵 ${tk(-u.to_return)} নিন</button>`}
+  </div>`;
+
+  $('#moneybody').innerHTML = `
+    <div class="stats" style="grid-template-columns:repeat(2,1fr)">
+      <div class="stat g2"><div class="lbl">আজ হাতে এসেছে</div><div class="val">${tk(d.collected_today)}</div></div>
+      <div class="stat g4"><div class="lbl">ফেরত দিতে হবে</div><div class="val">${tk(d.to_return_total)}</div></div>
+    </div>
+    ${d.give.length ? `<div class="section-title">ফেরত দিতে হবে (${bn(d.give.length)} জন)</div>
+      <div class="card"><div class="card-b tight">${d.give.map((u) => row(u, 'give')).join('')}</div></div>` : ''}
+    ${d.owe.length ? `<div class="section-title">টাকা নেওয়া বাকি (${bn(d.owe.length)} জন · ${tk(d.owed_total)})</div>
+      <div class="card"><div class="card-b tight">${d.owe.map((u) => row(u, 'owe')).join('')}</div></div>` : ''}
+    ${!d.give.length && !d.owe.length
+      ? `<div class="empty"><div class="big">✅</div>সবার হিসাব মিটে গেছে</div>` : ''}`;
+}
+
+/** বাজারের লিস্ট, প্লেট সাজানো ও টাকার হিসাব — তিন ট্যাবে */
 async function buyListSheet(tab = 'buy') {
   if (tab === 'plate') return platingSheet();
+  if (tab === 'money') return moneyTodaySheet();
   const d = await api(`/api/summary?date=${S.date}${fq()}`);
   sheet({
     title: `🛒 বাজারের লিস্ট`,
     body: `
-      <div class="tabs2" style="margin-bottom:14px">
-        <button class="on">🛒 কী কিনতে হবে</button>
-        <button data-act="buylist" data-tab="plate">🍽️ কে কী পাবে</button>
-      </div>
+      ${sheetTabs('buy')}
       <div class="banner info" style="margin-bottom:14px"><span class="ic">📅</span>
         <div>${niceDate(d.date)}<small>${bn(d.people)} জনের অর্ডার · ${bn(d.shops.length)} দোকান</small></div></div>
       ${d.shops.length === 0 ? `<div class="empty"><div class="big">🤷</div>কোনো অর্ডার নেই</div>` :
@@ -1062,51 +1197,78 @@ async function buyListSheet(tab = 'buy') {
   });
 }
 
-/** কাকে কী দিতে হবে — প্লেট সাজানোর তালিকা (PIN ও দোকানসহ) */
+/**
+ * কাকে কী দিতে হবে — নাস্তা সাজানোর তালিকা।
+ * প্রতিটা প্লেট সাজানো হয়ে গেলে পাশের ঘরে টিক দিয়ে দিন, কে বাকি আছে সাথে সাথেই বোঝা যাবে।
+ */
 async function platingSheet() {
   const d = await api(`/api/plating?date=${S.date}${fq()}`);
-  const byShop = {};
-  for (const o of d.orders) (byShop[o.shop_name || 'দোকান বলা হয়নি'] ||= []).push(o);
-
+  S.cache.plating = d;
   sheet({
     title: `🍽️ কে কী পাবে`,
     body: `
-      <div class="tabs2" style="margin-bottom:14px">
-        <button data-act="buylist" data-tab="buy">🛒 কী কিনতে হবে</button>
-        <button class="on">🍽️ কে কী পাবে</button>
-      </div>
-      <div class="banner info" style="margin-bottom:14px"><span class="ic">📅</span>
-        <div>${niceDate(d.date)}<small>${bn(d.people)} জন · মোট ${bn(d.total_qty)} টি জিনিস</small></div></div>
-      ${d.orders.length === 0 ? `<div class="empty"><div class="big">🤷</div>কোনো অর্ডার নেই</div>` :
-        Object.entries(byShop).map(([shop, list], si) => `
+      ${sheetTabs('plate')}
+      <div id="platebody"></div>`,
+    footer: `<div class="btn-row">
+      <button class="btn" data-act="printsheet">🖨️ প্রিন্ট</button>
+      <button class="btn primary" data-act="closesheet">বুঝেছি</button>
+    </div>`,
+    onOpen: () => paintPlating(),
+  });
+}
+
+function paintPlating() {
+  const d = S.cache.plating;
+  if (!d || !$('#platebody')) return;
+  const done = d.orders.filter((o) => o.status === 'delivered').length;
+  const byShop = new Map();
+  for (const o of d.orders) {
+    const k = o.shop_name || 'দোকান বলা হয়নি';
+    if (!byShop.has(k)) byShop.set(k, []);
+    byShop.get(k).push(o);
+  }
+
+  $('#platebody').innerHTML = d.orders.length === 0
+    ? `<div class="empty"><div class="big">🤷</div>কোনো অর্ডার নেই</div>`
+    : `<div class="banner ${done === d.people ? 'ok' : 'info'}">
+        <span class="ic">${done === d.people ? '✅' : '🍽️'}</span>
+        <div>${bn(done)} / ${bn(d.people)} জনের প্লেট সাজানো হয়েছে
+          <small>${niceDate(d.date)} · মোট ${bn(d.total_qty)} টি জিনিস</small></div></div>
+      ${[...byShop.entries()].map(([shop, list], si) => `
         <section style="${accent(si)}">
-          <div class="section-title" style="margin-top:${si ? 22 : 4}px">🏪 ${esc(shop)} — ${bn(list.length)} জন</div>
+          <div class="section-title" style="margin-top:${si ? 16 : 4}px">🏪 ${esc(shop)} — ${bn(list.length)} জন</div>
           ${list.map((o) => `
-            <div class="buy-row">
+            <div class="plate ${o.status === 'delivered' ? 'done' : ''}">
+              <label class="plate-tick">
+                <input type="checkbox" data-act="platecheck" data-id="${o.id}"
+                  ${o.status === 'delivered' ? 'checked' : ''} />
+              </label>
               <div class="buy-qty">${bn(o.pin || '—')}</div>
               <div style="flex:1;min-width:0">
-                <div class="buy-nm">${esc(o.user_name)}
-                  ${o.floor ? `<span class="chip">${bn(o.floor)}য় তলা</span>` : ''}
-                  <span class="chip ${OSTATUS[o.status].c}">${OSTATUS[o.status].t}</span></div>
-                <div style="margin-top:6px">
-                  ${o.lines.map((l) => `<div style="display:flex;gap:8px;align-items:baseline;padding:2px 0">
-                    <b style="font-family:var(--f-display);min-width:26px">${bn(l.qty)}×</b>
-                    <span>${emojiFor(l.item_name)} ${esc(l.item_name)}${l.option_name ? ` <span class="chip brand">${esc(l.option_name)}</span>` : ''}</span>
+                <div class="buy-nm">${esc(o.user_name)}${o.floor && !S.floor && isAdmin()
+                  ? ` <span class="chip">${bn(o.floor)}য়</span>` : ''}</div>
+                <div style="margin-top:4px">
+                  ${o.lines.map((l) => `<div class="plate-line">
+                    <b>${bn(l.qty)}×</b>
+                    <span>${emojiFor(l.item_name)} ${esc(l.item_name)}${
+                      l.option_name ? ` <span class="chip brand">${esc(l.option_name)}</span>` : ''}</span>
                   </div>`).join('')}
                 </div>
                 ${o.lines.filter((l) => l.fallback_type !== 'skip' || l.fallback_note)
                   .map((l) => `<div class="buy-fb">⚙ ${esc(l.item_name)}: ${esc(fbTextOf(l))}</div>`).join('')}
                 ${o.note ? `<div class="buy-fb" style="background:var(--gold-soft);color:var(--gold)">📝 ${esc(o.note)}</div>` : ''}
-                <div class="buy-sub" style="margin-top:5px">মোট ${tk(o.total)}</div>
+                <div class="buy-sub" style="margin-top:4px">দাম ${tk(o.total)}${
+                  S.boot.money_module && Number(o.paid_today) ? ` · হাতে দিয়েছিলেন ${tk(o.paid_today)}` : ''}</div>
+                ${S.boot.money_module && Number(o.to_return) > 0 ? `
+                  <button class="btn sm ok" data-act="platerefund" data-id="${o.id}" style="margin-top:6px">
+                    💵 ফেরত দিন ${tk(o.to_return)}</button>` : ''}
+                ${S.boot.money_module && Number(o.to_return) < 0 ? `
+                  <div class="buy-fb" style="background:var(--warn-soft);color:var(--warn)">
+                    💵 ${tk(-o.to_return)} পাওনা</div>` : ''}
               </div>
             </div>`).join('')}
         </section>`).join('')}
-      ${d.orders.length ? `<div class="buy-total"><span>${bn(d.people)} জন · ${bn(d.total_qty)} টি জিনিস</span><b>${tk(d.total_amount)}</b></div>` : ''}`,
-    footer: `<div class="btn-row">
-      <button class="btn" data-act="printsheet">🖨️ প্রিন্ট</button>
-      <button class="btn primary" data-act="closesheet">বুঝেছি</button>
-    </div>`,
-  });
+      <div class="buy-total"><span>${bn(d.people)} জন · ${bn(d.total_qty)} টি জিনিস</span><b>${tk(d.total_amount)}</b></div>`;
 }
 
 /** দোকান ধরে "কোনটা কয়টা" — রিপোর্টেও একই চেহারায় দেখায় */
@@ -1292,6 +1454,8 @@ function shopEditSheet(id) {
       <div class="field"><label>দোকানের নাম</label>
         <input class="input" id="s_name" value="${esc(s.name)}" placeholder="যেমন: প্রিন্স হোটেল" /></div>
       ${id ? `<label class="check"><input type="checkbox" id="s_active" ${s.active ? 'checked' : ''} /> দোকানটা চালু আছে</label>
+      <button class="btn block" data-act="newitemhere" data-id="${id}" style="margin-bottom:12px">
+        + এই দোকানের নতুন আইটেম (দামসহ)</button>
       <div class="section-title" style="margin-left:0">এই দোকানে কোনটার কত</div>
       <div class="card"><div class="card-b tight">
         ${items.map((it) => {
@@ -1519,6 +1683,47 @@ document.addEventListener('click', async (e) => {
       case 'setshop':
         S.shopId = id; S.dirty = true; return paintOrder();
       case 'shopedit': return shopEditSheet(id);
+      case 'newitemhere': {
+        // দোকানের ভেতর থেকেই নতুন জিনিস — নাম, দাম, ক্যাটাগরি দিলেই হয়ে যায়
+        const shop = S.shops.find((x) => x.id === id);
+        const cats = [...new Set(S.items.map((i) => i.category))];
+        sheet({
+          title: `+ ${esc(shop?.name || 'দোকান')}-এর নতুন আইটেম`,
+          body: `
+            <div class="field"><label>নাম</label>
+              <input class="input" id="ni_name" placeholder="যেমন: বুটের ডাল" /></div>
+            <div class="row2">
+              <div class="field"><label>এই দোকানে দাম (৳)</label>
+                <input class="input" id="ni_price" type="number" step="0.5" inputmode="decimal" placeholder="২০" /></div>
+              <div class="field"><label>ক্যাটাগরি</label>
+                <input class="input" id="ni_cat" list="catlist" value="${esc(cats[0] || 'নাস্তা')}" />
+                <datalist id="catlist">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
+            </div>
+            <div class="hint">এই দামটা শুধু এই দোকানের জন্য বসবে। অন্য দোকানে আলাদা দাম হলে
+              সেখানে গিয়ে বসিয়ে দিন — না বসালে এই দামই সাধারণ দাম হিসেবে চলবে।</div>`,
+          footer: `<button class="btn primary block" data-act="newitemsave" data-id="${id}">যোগ করুন</button>`,
+          onOpen: () => setTimeout(() => $('#ni_name')?.focus(), 120),
+        });
+        return;
+      }
+      case 'newitemsave': {
+        const name = $('#ni_name').value.trim();
+        const price = Number($('#ni_price').value) || 0;
+        if (!name) return toast('আইটেমের নাম দিন', 'err');
+        if (price <= 0) return toast('দাম দিন', 'err');
+        const r = await api('/api/items', {
+          method: 'POST',
+          body: { name, price, category: $('#ni_cat').value.trim() || 'নাস্তা' },
+        });
+        await api(`/api/shops/${id}/prices`, {
+          method: 'PUT',
+          body: { prices: [{ item_id: r.id, price, available: 1 }] },
+        });
+        toast(`✅ ${name} যোগ হলো · ${tk(price)}`, 'ok');
+        closeSheet();
+        await viewShops();
+        return shopEditSheet(id);
+      }
       case 'shopsave': {
         const name = $('#s_name').value.trim();
         if (!name) return toast('দোকানের নাম দিন', 'err');
@@ -1597,8 +1802,79 @@ document.addEventListener('click', async (e) => {
         return;
       }
 
+      // অর্ডার নেওয়ার সময় হাতে দেওয়া টাকা
+      case 'takecash':
+        e.stopPropagation();
+        return takeCashSheet(id, el.dataset.name, el.dataset.back || '');
+      case 'cashnow': {
+        const amt = Number(el.dataset.amt || $('#cashamt')?.value);
+        if (!amt || amt <= 0) return toast('টাকার অঙ্ক দিন', 'err');
+        await api('/api/ledger', {
+          method: 'POST',
+          body: { user_id: id, type: 'deposit', amount: amt, note: `${S.date} — অর্ডারের সময় হাতে দিলেন` },
+        });
+        toast(`💵 ${el.dataset.name} দিলেন ${tk(amt)}`, 'ok');
+        closeSheet();
+        if (el.dataset.back === 'money') return moneyTodaySheet();
+        if (S.cache.quick) {
+          const fresh = await api(`/api/quick-users?date=${S.date}${fq()}`);
+          S.cache.quick = fresh.users;
+          return orderForSheet();
+        }
+        if (S.tab === 'today') return viewToday();
+        return;
+      }
+      case 'moneyrefund': {
+        const amt = Number(el.dataset.amt);
+        if (!(amt > 0)) return toast('ফেরত দেওয়ার মতো টাকা নেই', 'err');
+        if (!confirm(`${el.dataset.name}-কে ${tk(amt)} ফেরত দিলেন?`)) return;
+        await api('/api/ledger', {
+          method: 'POST',
+          body: { user_id: id, type: 'refund', amount: amt, note: `${S.date} — নাস্তা দেওয়ার সময় ফেরত` },
+        });
+        toast(`✅ ${el.dataset.name}-কে ${tk(amt)} ফেরত দেওয়া হলো`, 'ok');
+        S.cache.money = await api(`/api/money-today?date=${S.date}${fq()}`);
+        return paintMoneyToday();
+      }
+      case 'platerefund': {
+        const o = S.cache.plating?.orders.find((x) => x.id === id);
+        if (!o) return;
+        const amt = Number(o.to_return);
+        if (amt <= 0) return toast('ফেরত দেওয়ার মতো টাকা নেই', 'err');
+        if (!confirm(`${o.user_name}-কে ${tk(amt)} ফেরত দিলেন?`)) return;
+        await api('/api/ledger', {
+          method: 'POST',
+          body: { user_id: o.user_id, type: 'refund', amount: amt, note: `${S.date} — নাস্তা দেওয়ার সময় ফেরত` },
+        });
+        toast(`✅ ${o.user_name}-কে ${tk(amt)} ফেরত দেওয়া হলো`, 'ok');
+        const d = await api(`/api/plating?date=${S.date}${fq()}`);
+        S.cache.plating = d;
+        return paintPlating();
+      }
+
       // স্টাফ কারো হয়ে অর্ডার
       case 'orderfor': return orderForSheet();
+      case 'quickplace': {
+        // এক ক্লিকেই ওই মানুষের রোজকার অর্ডার বসে যাবে
+        e.stopPropagation();
+        const u = (S.cache.quick || []).find((x) => x.id === id);
+        if (!u?.usual?.lines?.length) return toast('রোজকার অর্ডার সেভ করা নেই', 'err');
+        const r = await api('/api/orders', {
+          method: 'POST',
+          body: {
+            date: S.date,
+            user_id: id,
+            shop_id: u.usual.shop_id ?? u.default_shop_id ?? null,
+            lines: u.usual.lines,
+          },
+        });
+        toast(`✅ ${el.dataset.name}-এর অর্ডার বসে গেছে · ${tk(r.total)}`, 'ok');
+        const fresh = await api(`/api/quick-users?date=${S.date}${fq()}`);
+        S.cache.quick = fresh.users;
+        paintQuickList($('#qsearch')?.value.trim() || '');
+        fetchNotifs();
+        return;
+      }
       case 'orderforpick':
         closeSheet();
         S.orderFor = { id, name: el.dataset.name };
@@ -1627,6 +1903,15 @@ document.addEventListener('click', async (e) => {
         await viewToday();
         // অর্ডার নেওয়া বন্ধ করলে সাথে সাথেই বাজারের লিস্ট সামনে আসুক
         if (el.dataset.s === 'closed') buyListSheet();
+        return;
+      }
+      // প্লেট সাজানো হয়ে গেলে টিক — সাথে সাথেই "দেওয়া হয়েছে" হয়ে যায়
+      case 'platecheck': {
+        const on = el.checked;
+        await api(`/api/orders/${id}/status`, { method: 'PATCH', body: { status: on ? 'delivered' : 'pending' } });
+        const o = S.cache.plating?.orders.find((x) => x.id === id);
+        if (o) o.status = on ? 'delivered' : 'pending';
+        paintPlating();
         return;
       }
       case 'availsheet': return availSheet();

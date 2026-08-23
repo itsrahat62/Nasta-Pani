@@ -936,7 +936,7 @@ app.MapGet("/api/plating", (HttpContext ctx, string? date, string? floor) =>
 
     var orders = DL(c.Query(
         @"SELECT o.id, o.total, o.status, o.note, o.shop_name, o.updated_at,
-                 u.name AS user_name, u.pin, u.floor
+                 u.id AS user_id, u.name AS user_name, u.pin, u.floor
             FROM dbo.orders o JOIN dbo.users u ON u.id = o.user_id
            WHERE o.order_date = @d AND o.status <> 'cancelled' AND (@f IS NULL OR u.floor = @f)
            ORDER BY o.shop_name, u.floor, u.name", new { d, f }));
@@ -954,6 +954,18 @@ app.MapGet("/api/plating", (HttpContext ctx, string? date, string? floor) =>
         var mine = lines.Where(l => (int)l["order_id"]! == (int)o["id"]!).ToList();
         o["lines"] = mine;
         o["qty"] = mine.Sum(l => (int)l["qty"]!);
+
+        // হাতে কত টাকা দিয়েছিলেন আর নাস্তা দেওয়ার সময় কত ফেরত দিতে হবে
+        var uid = (int)o["user_id"]!;
+        var bal = BalanceOf(uid);
+        // খরচ বসে শুধু "দেওয়া হয়েছে" হলে — তাই তার আগে খরচটা হাতে বাদ দিয়ে হিসাব
+        var pending = (string)o["status"]! == "delivered" ? 0m : (decimal)o["total"]!;
+        o["balance"] = bal;
+        o["to_return"] = M(bal - pending);
+        o["paid_today"] = c.ExecuteScalar<decimal>(
+            @"SELECT ISNULL(SUM(amount), 0) FROM dbo.ledger
+               WHERE user_id = @u AND type = 'deposit' AND created_at LIKE @d + '%'",
+            new { u = uid, d });
     }
 
     return Results.Json(new
@@ -964,6 +976,85 @@ app.MapGet("/api/plating", (HttpContext ctx, string? date, string? floor) =>
         total_qty = orders.Sum(o => (int)o["qty"]!),
         total_amount = M(orders.Sum(o => (decimal)o["total"]!)),
         orders,
+    });
+});
+
+/// <summary>
+/// কেউ মুখে বললে স্টাফ যেন PIN বা নাম খুঁজে সাথে সাথেই তার রোজকার অর্ডার বসাতে পারেন।
+/// তাই এক কলেই নিজের তলার সবার নাম, PIN, রোজকার অর্ডার আর আজ দিয়েছে কি না — সব আসে।
+/// </summary>
+app.MapGet("/api/quick-users", (HttpContext ctx, string? date, string? floor) =>
+{
+    var (me, err) = Auth(ctx, "staff"); if (err is not null) return err;
+    var d = IsDate(date) ? date! : Db.Today();
+    var f = ScopeFloor(me!, floor);
+    using var c = Db.Open();
+    var rows = DL(c.Query(
+        @"SELECT u.id, u.name, u.pin, u.floor, u.usual_json, u.default_shop_id,
+                 o.id AS order_id, ISNULL(o.total, 0) AS total,
+                 ISNULL((SELECT SUM(qty) FROM dbo.order_lines WHERE order_id = o.id), 0) AS qty
+            FROM dbo.users u
+            LEFT JOIN dbo.orders o
+                   ON o.user_id = u.id AND o.order_date = @d AND o.status <> 'cancelled'
+           WHERE u.active = 1 AND u.role = 'user' AND (@f IS NULL OR u.floor = @f)
+           ORDER BY u.name", new { d, f }));
+
+    foreach (var r in rows)
+    {
+        r["usual"] = ParseUsual((string?)r["usual_json"]);
+        r.Remove("usual_json");
+        r["balance"] = BalanceOf((int)r["id"]!);   // হাতে কত জমা আছে
+    }
+    return Results.Json(new { date = d, floor = f, users = rows });
+});
+
+/// <summary>
+/// আজকের টাকার হিসাব — কাকে কত ফেরত দিতে হবে আর কার কাছে কত পাওনা।
+/// নাস্তা দেওয়ার পর স্টাফ এটা দেখেই টাকা মিটিয়ে দেন।
+/// </summary>
+app.MapGet("/api/money-today", (HttpContext ctx, string? date, string? floor) =>
+{
+    var (me, err) = Auth(ctx, "staff"); if (err is not null) return err;
+    var d = IsDate(date) ? date! : Db.Today();
+    var f = ScopeFloor(me!, floor);
+    using var c = Db.Open();
+
+    var rows = DL(c.Query(
+        @"SELECT u.id, u.name, u.pin, u.floor,
+                 ISNULL(o.total, 0) AS order_total, o.status AS order_status,
+                 ISNULL((SELECT SUM(amount) FROM dbo.ledger
+                          WHERE user_id = u.id AND type = 'deposit' AND created_at LIKE @d + '%'), 0) AS paid_today,
+                 ISNULL((SELECT SUM(amount) FROM dbo.ledger
+                          WHERE user_id = u.id AND type = 'refund' AND created_at LIKE @d + '%'), 0) AS returned_today
+            FROM dbo.users u
+            LEFT JOIN dbo.orders o
+                   ON o.user_id = u.id AND o.order_date = @d AND o.status <> 'cancelled'
+           WHERE u.active = 1 AND u.role = 'user' AND (@f IS NULL OR u.floor = @f)
+           ORDER BY u.name", new { d, f }));
+
+    foreach (var r in rows)
+    {
+        var bal = BalanceOf((int)r["id"]!);
+        // খরচ বসে শুধু "দেওয়া হয়েছে" হলে — তার আগে দামটা হাতে বাদ দিয়ে হিসাব
+        var pending = (string?)r["order_status"] == "delivered" ? 0m : (decimal)r["order_total"]!;
+        r["balance"] = bal;
+        r["to_return"] = M(bal - pending);
+    }
+
+    var give = rows.Where(r => (decimal)r["to_return"]! > 0).ToList();
+    var owe = rows.Where(r => (decimal)r["to_return"]! < 0).ToList();
+
+    return Results.Json(new
+    {
+        date = d,
+        floor = f,
+        collected_today = M(rows.Sum(r => (decimal)r["paid_today"]!)),
+        returned_today = M(rows.Sum(r => (decimal)r["returned_today"]!)),
+        to_return_total = M(give.Sum(r => (decimal)r["to_return"]!)),
+        owed_total = M(owe.Sum(r => -(decimal)r["to_return"]!)),
+        give,
+        owe,
+        all = rows,
     });
 });
 

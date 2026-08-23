@@ -660,6 +660,21 @@ table.tbl th, table.tbl td { padding: 7px 6px; }
 }
 .tile .o { font-size: 11.5px; color: var(--muted); font-weight: 600; }
 
+/* ---- প্লেট সাজানো: একটা একটা করে টিক ---- */
+.plate {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px; margin-bottom: 7px;
+  background: var(--card); border-radius: 14px;
+  border: 1px solid var(--line-soft); box-shadow: var(--shadow-s);
+  transition: opacity .15s, background .15s;
+}
+.plate.done { opacity: .5; background: var(--ok-soft); }
+.plate.done .buy-nm { text-decoration: line-through; }
+.plate-tick { display: grid; place-items: center; padding-top: 9px; cursor: pointer; }
+.plate-tick input { width: 24px; height: 24px; accent-color: var(--ok); cursor: pointer; }
+.plate-line { display: flex; gap: 7px; align-items: baseline; padding: 1px 0; font-size: 13.5px; }
+.plate-line b { font-family: var(--f-display); min-width: 24px; color: var(--accent); }
+
 /* এক লাইনে একজনের অর্ডার — তালিকা ছোট রাখে */
 .person {
   display: flex; align-items: center; gap: 9px;
