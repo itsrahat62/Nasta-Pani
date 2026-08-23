@@ -124,41 +124,55 @@ dotnet run
 
 আইকন বদলাতে চাইলে: `node tools/gen-icons.js` (Node লাগবে, শুধু আইকনের জন্য)।
 
+**দেখানোর জন্য ডেমো ডেটা** (দুই তলার ৯ জন, দুই হোটেলের দাম, রোজকার অর্ডার, টাকার হিসাব):
+
+```bash
+python tools/demo-data.py http://localhost:5000
+```
+
+> ⚠️ এটা শুধু খালি/টেস্ট ডেটাবেজে চালাবেন। **লাইভ সাইটে কখনো নয়** — ওখানে
+> শুধু অ্যাডমিন, স্টাফ আর শুরুর মেনুটাই থাকবে, বানানো লোকজন বা অর্ডার থাকবে না।
+
 ---
 
 ## MonsterASP-এ লাইভ করা
 
-### ১. অ্যাকাউন্ট ও সাইট
-1. মেইলের **Activation Code** দিয়ে অ্যাকাউন্ট চালু করুন → <https://admin.monsterasp.net>
-2. **Websites → Create** → সাইট বানান। নাম হবে `siteXXXXX`, ঠিকানা `siteXXXXX.runasp.net`
-3. সাইটের **.NET version = .NET 8**, **Pipeline = Integrated** রাখুন
+সাইট আর ডেটাবেজ **বানানো হয়ে গেছে** (ফ্রি প্ল্যান, EU ডেটাসেন্টার):
 
-### ২. ডেটাবেজ
-1. **Databases → MSSQL → Create**
-2. তৈরি হওয়া **Connection String** কপি করুন। শেষে `TrustServerCertificate=True;` না থাকলে যোগ করে নিন।
+| | |
+|---|---|
+| ঠিকানা | **nastapani.runasp.net** (`site87004`) |
+| FTP হোস্ট | `site87004.siteasp.net` · লগইন `site87004` |
+| ডেটাবেজ | `db64992.databaseasp.net` (MSSQL) · লগইন `db64992` |
 
-### ৩. GitHub Secrets
+পাসওয়ার্ডগুলো প্যানেলে: **Websites → Manage → FTP/SFTP access** আর
+**Databases → Manage → Local access**। ওগুলো এখানে বা কোডে লেখা নেই — GitHub Secrets-এ বসাতে হবে।
+
+### GitHub Secrets
 রিপোর ⚙ **Settings → Secrets and variables → Actions → New repository secret**:
 
 | Secret | কী দেবেন |
 |---|---|
-| `MONSTERASP_FTP_HOST` | `siteXXXXX.siteasp.net` |
-| `MONSTERASP_FTP_USER` | `siteXXXXX` |
+| `MONSTERASP_FTP_HOST` | `site87004.siteasp.net` |
+| `MONSTERASP_FTP_USER` | `site87004` |
 | `MONSTERASP_FTP_PASSWORD` | প্যানেলের FTP পাসওয়ার্ড |
-| `NASTA_DB` | MSSQL কানেকশন স্ট্রিং |
+| `NASTA_DB` | MSSQL কানেকশন স্ট্রিং (প্যানেল থেকে কপি) |
+| `SITE_URL` (ঐচ্ছিক) | `https://nastapani.runasp.net` |
 
 `NASTA_DB` না দিলেও চলবে — তখন সার্ভারে নিজে হাতে একবার `wwwroot/appsettings.Production.json` রেখে দিন, ডিপ্লয় সেটা মুছবে না।
 
-### ৪. ডিপ্লয়
+### ডিপ্লয়
 `main`-এ push করলেই **অটো লাইভ** হবে ([.github/workflows/deploy-monsterasp.yml](.github/workflows/deploy-monsterasp.yml))।
 
 ধাপ: publish → `app_offline.htm` তুলে IIS থামানো (নইলে `NastaOrder.dll` লক থাকে) → FTP আপলোড → `app_offline.htm` মুছে অ্যাপ চালু → warm-up ping।
 
-### ৫. SSL সার্টিফিকেট
-1. প্যানেলে **Websites → (আপনার সাইট) → SSL/TLS**
-2. **Let's Encrypt (Free)** বেছে **Request / Install** চাপুন — `siteXXXXX.runasp.net`-এর জন্য ফ্রি
-3. হয়ে গেলে **Force HTTPS** চালু করুন (`web.config`-এ HTTPS রিডাইরেক্ট রুলও দেওয়া আছে)
-4. নিজের ডোমেইন লাগালে আগে **Domains** থেকে ডোমেইন যোগ করে DNS পয়েন্ট করুন, তারপর ওই ডোমেইনের জন্য আবার Let's Encrypt চাপুন
+### SSL সার্টিফিকেট
+প্যানেলে **Websites → Manage → HTTPS / SSL certificates → Enable HTTPS → Let's Encrypt**।
+
+ফ্রি প্ল্যানে Let's Encrypt ডিফল্টে বন্ধ থাকে — প্যানেল তখন সাপোর্ট টিকিট খুলতে বলে।
+**সেই টিকিট খোলা হয়ে গেছে (`Y13A-Q47K-G09U`)**, সাপোর্ট চালু করে দিলে ওই পাতা থেকেই
+Let's Encrypt বসানো যাবে। তারপর **Force redirect to HTTPS** চালু করুন
+(`web.config`-এ HTTPS রিডাইরেক্ট রুলও দেওয়া আছে)।
 
 > HTTPS ছাড়া PWA "হোম স্ক্রিনে যোগ করুন" ঠিকমতো কাজ করে না — তাই SSL বসানো জরুরি।
 

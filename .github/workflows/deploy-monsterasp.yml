@@ -118,8 +118,8 @@ jobs:
         if: always()
         continue-on-error: true
         env:
-          FTP_USER: ${{ secrets.MONSTERASP_FTP_USER }}
+          SITE_URL: ${{ secrets.SITE_URL }}
         run: |
           sleep 12
-          curl -sS -o /dev/null -w "warm-up: %{http_code}\n" \
-            "https://${FTP_USER}.runasp.net/" --max-time 60 || true
+          URL="${SITE_URL:-https://nastapani.runasp.net}"
+          curl -sS -o /dev/null -w "warm-up ($URL): %{http_code}\n" "$URL" --max-time 60 || true
