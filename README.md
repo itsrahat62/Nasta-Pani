@@ -137,6 +137,10 @@ python tools/demo-data.py http://localhost:5000
 
 ## MonsterASP-এ লাইভ করা
 
+> ✅ **সাইট এখন লাইভ:** <http://nastapani.runasp.net> (২৪ আগস্ট ২০২৬)
+> GitHub Secrets বসানো হয়ে গেছে, `main`-এ push করলেই নিজে থেকে ডিপ্লয় হয়।
+> **এখনো HTTPS নেই** — নিচের [SSL সার্টিফিকেট](#ssl-সার্টিফিকেট) দেখুন।
+
 সাইট আর ডেটাবেজ **বানানো হয়ে গেছে** (ফ্রি প্ল্যান, EU ডেটাসেন্টার):
 
 | | |
@@ -149,7 +153,8 @@ python tools/demo-data.py http://localhost:5000
 **Databases → Manage → Local access**। ওগুলো এখানে বা কোডে লেখা নেই — GitHub Secrets-এ বসাতে হবে।
 
 ### GitHub Secrets
-রিপোর ⚙ **Settings → Secrets and variables → Actions → New repository secret**:
+**সবগুলো বসানো হয়ে গেছে** — নতুন করে কিছু করতে হবে না। পাসওয়ার্ড বদলালে শুধু
+রিপোর ⚙ **Settings → Secrets and variables → Actions**-এ গিয়ে আপডেট করবেন:
 
 | Secret | কী দেবেন |
 |---|---|
@@ -170,9 +175,18 @@ python tools/demo-data.py http://localhost:5000
 প্যানেলে **Websites → Manage → HTTPS / SSL certificates → Enable HTTPS → Let's Encrypt**।
 
 ফ্রি প্ল্যানে Let's Encrypt ডিফল্টে বন্ধ থাকে — প্যানেল তখন সাপোর্ট টিকিট খুলতে বলে।
-**সেই টিকিট খোলা হয়ে গেছে (`Y13A-Q47K-G09U`)**, সাপোর্ট চালু করে দিলে ওই পাতা থেকেই
-Let's Encrypt বসানো যাবে। তারপর **Force redirect to HTTPS** চালু করুন
-(`web.config`-এ HTTPS রিডাইরেক্ট রুলও দেওয়া আছে)।
+টিকিট (`Y13A-Q47K-G09U`) খোলা আছে; সাপোর্ট বলেছে **আগে অ্যাপটা আপলোড করতে হবে,
+তারপরই HTTPS চালু করা যাবে**। অ্যাপ আপলোড হয়ে গেছে, তাই টিকিটে আবার জানানো হয়েছে —
+সাপোর্ট চালু করে দিলে ওই পাতা থেকে Let's Encrypt বসিয়ে নিন।
+
+**সার্টিফিকেট বসার পর যে দুটো কাজ:**
+
+1. `web.config`-এ HTTPS রিডাইরেক্টের কমেন্ট তুলে দিন (নিচের ⚠️ দেখুন), push করুন
+2. প্যানেলে **Force redirect to HTTPS** চালু করুন
+
+> ⚠️ **সার্ট বসার আগে রিডাইরেক্ট চালু করবেন না।** সার্টিফিকেট ছাড়া রিডাইরেক্ট চালু থাকলে
+> `http` থেকে `https`-এ পাঠায়, আর `https`-এ কোনো সার্ট নেই — তাই **সাইট পুরো বন্ধ হয়ে যায়**।
+> ঠিক এই কারণেই এখন `web.config`-এ রুলটা কমেন্ট করে রাখা।
 
 > HTTPS ছাড়া PWA "হোম স্ক্রিনে যোগ করুন" ঠিকমতো কাজ করে না — তাই SSL বসানো জরুরি।
 
