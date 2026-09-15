@@ -129,6 +129,12 @@ function floorTag() {
   return f ? ` · ${bn(f)}য় তলা` : (isAdmin() ? ' · সব তলা' : '');
 }
 
+/**
+ * নাম লেখার ঘরে বসানোর জন্য। মোবাইল কিবোর্ড নিজে থেকে "ঠিক" করে দিলে
+ * Tareq লিখে Tariq সেভ হয়ে যেত — নামের ঘরে অটো-কারেক্ট চলবে না।
+ */
+const RAW_TEXT = 'autocorrect="off" spellcheck="false"';
+
 const ROLE_BN = { super_admin: 'সুপার অ্যাডমিন', staff: 'স্টাফ', user: 'ইউজার' };
 const OSTATUS = {
   pending:   { t: 'অপেক্ষায়',  c: 'warn' },
@@ -273,7 +279,7 @@ function renderAuth() {
         ${t === 'reg' ? `
         <div class="field">
           <label>আপনার নাম (অফিসের ডাকনাম)</label>
-          <input class="input" name="name" autocomplete="name"
+          <input class="input" name="name" autocomplete="name" ${RAW_TEXT}
             placeholder="অফিসে আপনাকে যে নামে ডাকে — যেমন: রাহাত ভাই" required />
           <div class="hint">অফিসে সবাই আপনাকে যে নামে চেনে সেটাই দিন — স্টাফ এই নাম দেখেই নাস্তা বুঝিয়ে দেবেন।</div>
         </div>` : ''}
@@ -1217,7 +1223,7 @@ function subSheet(lineId) {
         </select></div>
       <div class="field"><label>তালিকায় নেই? নামটা লিখে দিন</label>
         <input class="input" id="sb_other" value="${esc(line.sub_item_id ? '' : line.sub_name || '')}"
-          placeholder="যেমন: নিমকি" /></div>
+          ${RAW_TEXT} placeholder="যেমন: নিমকি" /></div>
       <div class="row2">
         <div class="field"><label>কয়টা</label>
           <input class="input" id="sb_qty" type="number" min="0" max="99"
@@ -1707,7 +1713,8 @@ function shopEditSheet(id) {
     title: id ? `🏪 ${esc(s.name)}` : 'নতুন দোকান',
     body: `
       <div class="field"><label>দোকানের নাম</label>
-        <input class="input" id="s_name" value="${esc(s.name)}" placeholder="যেমন: প্রিন্স হোটেল" /></div>
+        <input class="input" id="s_name" value="${esc(s.name)}" ${RAW_TEXT}
+          placeholder="যেমন: প্রিন্স হোটেল" /></div>
       ${id ? `<label class="check"><input type="checkbox" id="s_active" ${s.active ? 'checked' : ''} /> দোকানটা চালু আছে</label>
       <button class="btn block" data-act="newitemhere" data-id="${id}" style="margin-bottom:12px">
         + এই দোকানের নতুন আইটেম (দামসহ)</button>
@@ -1773,7 +1780,8 @@ function itemEditSheet(id) {
     title: id ? esc(it.name) : 'নতুন আইটেম',
     body: `
       <div class="row2">
-        <div class="field"><label>নাম</label><input class="input" id="i_name" value="${esc(it.name)}" placeholder="যেমন: সিঙ্গারা" /></div>
+        <div class="field"><label>নাম</label>
+          <input class="input" id="i_name" value="${esc(it.name)}" ${RAW_TEXT} placeholder="যেমন: সিঙ্গারা" /></div>
         <div class="field"><label>ক্যাটাগরি</label><input class="input" id="i_cat" value="${esc(it.category)}" /></div>
       </div>
       <div class="section-title" style="margin-left:0">কোন দোকানে কত দাম</div>
@@ -1854,7 +1862,9 @@ function userEditSheet(id) {
   sheet({
     title: id ? esc(u.name) : 'নতুন ইউজার',
     body: `
-      <div class="field"><label>নাম</label><input class="input" id="u_name" value="${esc(u.name)}" /></div>
+      <div class="field"><label>নাম</label>
+        <input class="input" id="u_name" value="${esc(u.name)}" ${RAW_TEXT} autocomplete="off" />
+        <div class="hint">যা লিখবেন হুবহু তাই সেভ হবে। এক নামে দুজন থাকতে পারেন — PIN আলাদা হলেই হলো।</div></div>
       <div class="row2">
         <div class="field"><label>PIN</label>
           <input class="input" id="u_pin" inputmode="numeric" maxlength="6" value="${esc(u.pin || '')}"
@@ -1973,7 +1983,7 @@ document.addEventListener('click', async (e) => {
           title: `+ ${esc(shop?.name || 'দোকান')}-এর নতুন আইটেম`,
           body: `
             <div class="field"><label>নাম</label>
-              <input class="input" id="ni_name" placeholder="যেমন: বুটের ডাল" /></div>
+              <input class="input" id="ni_name" ${RAW_TEXT} placeholder="যেমন: বুটের ডাল" /></div>
             <div class="row2">
               <div class="field"><label>এই দোকানে দাম (৳)</label>
                 <input class="input" id="ni_price" type="number" step="0.5" inputmode="decimal" placeholder="২০" /></div>
