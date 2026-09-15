@@ -1,5 +1,6 @@
 /* খুব হালকা service worker — শুধু অ্যাপ শেল ক্যাশে রাখে, API নয় */
-const CACHE = 'nasta-v1';
+// ফাইল বদলালে এই নামটা বাড়িয়ে দিন — পুরোনো ক্যাশ মুছে নতুন শেল বসে
+const CACHE = 'nasta-v2';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (e) => {

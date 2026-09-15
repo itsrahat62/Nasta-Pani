@@ -317,7 +317,7 @@ function shell(inner, opts = {}) {
     : [
         { k: 'order',   ic: '🍽️', t: 'অর্ডার' },
         { k: 'history', ic: '🗓️', t: 'ইতিহাস' },
-        ...(S.boot.money_module ? [{ k: 'money', ic: '💰', t: 'হিসাব' }] : []),
+        ...(S.boot.money_module ? [{ k: 'money', ic: '📊', t: 'ড্যাশবোর্ড' }] : []),
         { k: 'more',    ic: '⋯',  t: 'আরও' },
       ];
   const activeKey = ['items', 'users', 'settings', 'password'].includes(S.tab)
@@ -439,15 +439,21 @@ const FB_TEXT = {
 
 function paintOrder() {
   const locked = S.orderMeta.locked;
-  const total = cartTotal();
-  const count = [...S.cart.values()].reduce((s, l) => s + l.qty, 0);
+  const saved = S.orderMeta.order;
+  // লক হয়ে গেলে আর কার্টের হিসাব দেখানো ঠিক নয় — সেভ হওয়া অর্ডারের আসল টাকাটাই
+  // দেখাতে হবে, নইলে বদলি জিনিসের পর টোটালবার আর হিসাবের অঙ্ক আলাদা দেখাবে।
+  const total = locked && saved ? Number(saved.total) : cartTotal();
+  const count = locked && saved
+    ? saved.lines.reduce((s, l) => s + (l.missing ? l.sub_qty : l.qty), 0)
+    : [...S.cart.values()].reduce((s, l) => s + l.qty, 0);
 
   // বেছে নেওয়া দোকানে যেগুলো পাওয়াই যায় না, সেগুলো দেখানোর দরকার নেই
   const sold = (it) => !(it.shop_missing || []).includes(S.shopId);
   const menu = S.items.filter(sold);
   const cats2 = [...new Set(menu.map((i) => i.category))];
 
-  const body = cats2.map((cat, ci) => {
+  // পিসিতে এই মোড়কটাই দুই কলাম হয়ে যায় (CSS-এ) — স্ক্রল কমে, চওড়া ফাঁকা জায়গাও থাকে না
+  const body = `<div class="menu-grid">${cats2.map((cat, ci) => {
     const list = menu.filter((i) => i.category === cat);
     return `
       <section style="${accent(ci)}">
@@ -456,7 +462,7 @@ function paintOrder() {
           ${list.map((it) => itemRow(it, locked)).join('')}
         </div></div>
       </section>`;
-  }).join('');
+  }).join('')}</div>`;
 
   const usualLines = S.usual?.lines || [];
   const canQuick = !locked && usualLines.length > 0;
@@ -469,6 +475,8 @@ function paintOrder() {
       ? `<div class="banner warn"><span class="ic">🔒</span><div>${esc(S.orderMeta.lock_reason)}</div></div>` : ''}
     ${!locked && S.orderMeta.late_note
       ? `<div class="banner warn"><span class="ic">⏳</span><div>${esc(S.orderMeta.late_note)}</div></div>` : ''}
+    ${acceptBanner()}
+    ${subsNotice()}
     ${canQuick ? `
     <div class="card" style="border:1.5px solid var(--brand);">
       <div class="card-b">
@@ -526,6 +534,45 @@ function paintOrder() {
 function refreshSaveBtn() {
   const b = document.querySelector('[data-act="save"]');
   if (b) { b.disabled = !S.dirty; b.textContent = S.dirty ? 'সেভ করুন' : 'সেভ করা আছে ✓'; }
+}
+
+/**
+ * স্টাফ অর্ডারটা গ্রহণ করেছেন কি না — ইউজারের সবচেয়ে বড় প্রশ্নটার উত্তর।
+ * স্টাফ কারো হয়ে অর্ডার করলে এটা দেখানোর দরকার নেই, তিনি নিজেই তো দায়িত্বে।
+ */
+function acceptBanner() {
+  const o = S.orderMeta?.order;
+  if (!o || S.orderFor) return '';
+  if (o.accepted) {
+    const who = S.orderMeta.accepted_by_name;
+    const at = o.accepted_at ? bn(String(o.accepted_at).slice(11, 16)) : '';
+    return `<div class="banner ok"><span class="ic">✅</span><div>
+      আপনার অর্ডার গ্রহণ করা হয়েছে
+      <small>${who ? esc(who) + ' নিয়েছেন' : 'স্টাফ নিয়েছেন'}${at ? ` · ${at}` : ''}</small></div></div>`;
+  }
+  return `<div class="banner warn"><span class="ic">⏳</span><div>
+    এখনো গ্রহণ করা হয়নি
+    <small>আপনার তলার দায়িত্বে যিনি আছেন, তিনি দেখে নিলেই এখানে ✅ দেখাবে</small></div></div>`;
+}
+
+/** যা পাওয়া যায়নি আর বদলে যা আনা হয়েছে — সেই খবরটা উপরেই জানিয়ে দেওয়া */
+function subsNotice() {
+  const subs = (S.orderMeta?.order?.lines || []).filter((l) => l.missing);
+  if (subs.length === 0) return '';
+  return `<div class="banner info"><span class="ic">🔁</span><div>
+    ${bn(subs.length)} টি জিনিস পাওয়া যায়নি — বদলে অন্য কিছু আনা হয়েছে
+    <small>${esc(subs.map(subTextOf).join(' · '))}</small></div></div>`;
+}
+
+/** "সিঙ্গারা পাওয়া যায়নি, তাই সমুচা আনা হয়েছে ২ টি · ৳২৪" — এক লাইনে পুরো কথাটা */
+function subTextOf(l) {
+  const why = l.fallback_type === 'anything' ? 'আপনি বলেছিলেন যেকোনো কিছু'
+    : l.fallback_type === 'item' ? `আপনি বলেছিলেন না পেলে ${l.fallback_name}`
+    : 'আপনি বলেছিলেন না পেলে নেব না';
+  if (!l.sub_name) return `${l.item_name} পাওয়া যায়নি — কিছু আনা হয়নি`;
+  const amt = `${bn(l.sub_qty)} টি · ${tk(l.sub_subtotal)}`;
+  return `${l.item_name} পাওয়া যায়নি, ${why} — তাই ${l.sub_name} আনা হয়েছে (${amt})${
+    l.sub_note ? ` · ${l.sub_note}` : ''}`;
 }
 
 function itemRow(it, locked) {
@@ -727,43 +774,97 @@ async function viewHistory() {
       <div class="card" style="${accent(oi)}">
         <div class="card-h">
           <div class="grow"><h2>${niceDate(o.order_date)}</h2></div>
+          ${o.accepted ? `<span class="chip ok" title="স্টাফ গ্রহণ করেছেন">✅ গৃহীত</span>`
+            : `<span class="chip warn" title="এখনো গ্রহণ করা হয়নি">⏳</span>`}
           <span class="chip ${OSTATUS[o.status].c}">${OSTATUS[o.status].t}</span>
           <b class="amt">${tk(o.total)}</b>
         </div>
         <div class="card-b tight">
-          ${o.lines.map((l) => `<div class="item">
-            <div class="ava">${emojiFor(l.item_name)}</div>
+          ${o.lines.map((l) => `<div class="item ${l.missing ? 'gone' : ''}">
+            <div class="ava">${l.missing ? '🔁' : emojiFor(l.item_name)}</div>
             <div class="info"><div class="nm">${esc(l.item_name)}${l.option_name ? ` <span class="chip brand">${esc(l.option_name)}</span>` : ''}</div>
-              <div class="pr">${tk(l.unit_price)} × ${bn(l.qty)}</div></div>
-            <b class="amt">${tk(l.subtotal)}</b>
+              <div class="pr">${l.missing ? esc(subTextOf(l)) : `${tk(l.unit_price)} × ${bn(l.qty)}`}</div></div>
+            <b class="amt">${tk(l.missing ? l.sub_subtotal : l.subtotal)}</b>
           </div>`).join('')}
         </div>
       </div>`).join(''),
     { title: 'আমার অর্ডার', sub: 'গত ৬০ দিন' });
 }
 
+// ======================================================= ৩. ড্যাশবোর্ড (ইউজার)
+/**
+ * ইউজারের নিজের ড্যাশবোর্ড — দুটো ভাগ:
+ *   ভাগ ১: রোজ কত টাকা দিলেন আর এখন কত ফেরত পাবেন
+ *   ভাগ ২: এখন পর্যন্ত মোট কত টাকার নাস্তা খেয়েছেন
+ */
+async function viewDashboard() {
+  shell(`<div class="spin"></div>`);
+  const [d, led] = await Promise.all([api('/api/me/dashboard'), api('/api/ledger/my')]);
+  const t = d.totals;
+  const days = d.days || [];
+  const back = d.balance;
+
+  const dayRows = days.map((r) => {
+    // আজকের অর্ডার এখনো "দেওয়া হয়েছে" হয়নি — টাকাটা যাবে, কিন্তু এখনো কাটা হয়নি
+    const soon = r.has_order && r.order_status !== 'delivered' ? Number(r.order_total) : 0;
+    const notes = [];
+    if (r.has_order) notes.push(r.accepted ? '✅ অর্ডার গৃহীত' : '⏳ গ্রহণের অপেক্ষায়');
+    if (soon) notes.push(`${tk(soon)} এখনো কাটা হয়নি`);
+    if (Number(r.refund)) notes.push(`ফেরত পেয়েছেন ${tk(r.refund)}`);
+    if (Number(r.adjust)) notes.push(`সমন্বয় ${tk(r.adjust)}`);
+    return `<div class="dayrow">
+      <div class="dr-d"><b>${shortDate(r.date)}</b><small>${esc(notes.join(' · ') || '—')}</small></div>
+      <div class="dr-m"><span class="${Number(r.deposit) ? 'pos' : 'zero'}">${
+        Number(r.deposit) ? '+' + tk(r.deposit) : '—'}</span></div>
+      <div class="dr-m"><span class="${Number(r.charge) ? 'neg' : 'zero'}">${
+        Number(r.charge) ? '−' + tk(r.charge) : '—'}</span></div>
+      <div class="dr-m"><span>${tk(r.balance_after)}</span></div>
+    </div>`;
+  }).join('');
+
+  shell(`
+    <!-- ভাগ ১ — রোজকার জমা আর ফেরত -->
+    <div class="section-title">১· রোজ কত দিলেন, কত ফেরত পাবেন</div>
+    <div class="hero ${back > 0 ? 'green' : back < 0 ? 'red' : 'blue'}">
+      <div class="lbl">${back < 0 ? 'আপনার কাছে পাওনা' : 'এখন ফেরত পাবেন'}</div>
+      <div class="val">${tk(Math.abs(back))}</div>
+      <div class="sub">${back > 0 ? 'এই টাকাটা এখন স্টাফের কাছে জমা আছে'
+        : back < 0 ? 'এই টাকাটা স্টাফকে দিতে হবে' : 'সব হিসাব মিটে গেছে'}</div>
+    </div>
+    ${t.pending ? `<div class="banner info"><span class="ic">⏳</span><div>
+      ${tk(t.pending)} এখনো হিসাবে বসেনি<small>নাস্তা বুঝে পাওয়ার পরই খরচ হিসেবে কাটা হবে</small></div></div>` : ''}
+    ${days.length ? `<div class="card"><div class="card-b tight">
+      <div class="dayrow head"><div class="dr-d">দিন</div><div class="dr-m">দিলেন</div>
+        <div class="dr-m">খেলেন</div><div class="dr-m">দিন শেষে</div></div>
+      ${dayRows}
+    </div></div>` : `<div class="empty"><div class="big">🗓️</div>এখনো কোনো হিসাব শুরু হয়নি</div>`}
+
+    <!-- ভাগ ২ — এখন পর্যন্ত মোট কত খরচ -->
+    <div class="section-title">২· এখন পর্যন্ত মোট কত খরচ</div>
+    <div class="hero">
+      <div class="lbl">এখন পর্যন্ত এত টাকার নাস্তা খেয়েছেন</div>
+      <div class="val">${tk(t.charge)}</div>
+      <div class="sub">${bn(t.eaten_days)} দিনের নাস্তা${
+        t.eaten_days ? ` · দিনে গড়ে ${tk(t.charge / t.eaten_days)}` : ''}</div>
+    </div>
+    <div class="stats">
+      <div class="stat g2"><div class="lbl">মোট জমা দিয়েছেন</div><div class="val">${tk(t.deposit)}</div></div>
+      <div class="stat g1"><div class="lbl">মোট খরচ</div><div class="val">${tk(t.charge)}</div></div>
+      ${Number(t.refund) ? `<div class="stat g4"><div class="lbl">ফেরত নিয়েছেন</div><div class="val">${tk(t.refund)}</div></div>` : ''}
+      <div class="stat g3"><div class="lbl">যত দিন অর্ডার</div><div class="val">${bn(t.order_days)}</div></div>
+    </div>
+
+    <div class="section-title">লেনদেন</div>
+    <div class="card"><div class="card-b tight">
+      ${led.rows.length ? led.rows.map(ledgerRow).join('')
+        : `<div class="empty"><div class="big">🪙</div>কোনো লেনদেন নেই</div>`}
+    </div></div>`, { title: 'আমার ড্যাশবোর্ড', sub: 'জমা, খরচ ও ফেরত' });
+}
+
 // =========================================================== ৩. টাকার হিসাব
 async function viewMoney() {
+  if (!isStaff()) return viewDashboard();
   shell(`<div class="spin"></div>`);
-  if (!isStaff()) {
-    const d = await api('/api/ledger/my');
-    const sum = (t) => d.rows.filter((r) => r.type === t).reduce((s, r) => s + Number(r.amount), 0);
-    return shell(`
-      <div class="hero ${d.balance >= 0 ? '' : 'red'}">
-        <div class="lbl">আপনার কাছে জমা আছে</div>
-        <div class="val">${tk(d.balance)}</div>
-        <div class="sub">${d.balance > 0 ? 'এই টাকা স্টাফের কাছে আছে' : 'সব হিসাব মিটে গেছে'}</div>
-      </div>
-      <div class="stats">
-        <div class="stat g2"><div class="lbl">মোট জমা দিয়েছেন</div><div class="val">${tk(sum('deposit'))}</div></div>
-        <div class="stat g1"><div class="lbl">নাস্তায় খরচ</div><div class="val">${tk(sum('charge'))}</div></div>
-        ${sum('refund') ? `<div class="stat g4"><div class="lbl">ফেরত পেয়েছেন</div><div class="val">${tk(sum('refund'))}</div></div>` : ''}
-      </div>
-      <div class="section-title">লেনদেন</div>
-      <div class="card"><div class="card-b tight">
-        ${d.rows.length ? d.rows.map(ledgerRow).join('') : `<div class="empty"><div class="big">🪙</div>কোনো লেনদেন নেই</div>`}
-      </div></div>`, { title: 'আমার হিসাব', sub: 'জমা, খরচ ও ফেরত' });
-  }
 
   const list = await api('/api/ledger/balances?' + (S.floor ? 'floor=' + S.floor : ''));
   const totalHeld = list.reduce((s, u) => s + u.balance, 0);
@@ -856,7 +957,8 @@ async function viewToday() {
   const amount = orders.filter((o) => o.status !== 'cancelled').reduce((s, o) => s + o.total, 0);
 
   const live = liveTotals(orders);
-  const totalQty = orders.reduce((s, o) => s + o.lines.reduce((x, l) => x + l.qty, 0), 0);
+  const totalQty = orders.reduce(
+    (s, o) => s + o.lines.reduce((x, l) => x + (l.missing ? l.sub_qty : l.qty), 0), 0);
   const offItems = items.filter((i) => i.active && !i.available);
 
   shell(`
@@ -919,16 +1021,26 @@ async function viewToday() {
             S.floor || !isAdmin() ? '' : o.user_floor ? ` · ${bn(o.user_floor)}য়` : ''}</div>
         </div>
         <b class="amt">${tk(o.total)}</b>
+        <button class="btn sm ${o.accepted ? 'ok' : ''}" data-act="accept" data-id="${o.id}"
+          data-v="${o.accepted ? 0 : 1}"
+          title="${o.accepted ? 'গ্রহণ করেছেন — চাপ দিলে ফিরিয়ে নেবে' : 'চাপ দিয়ে গ্রহণ করুন'}"
+          >${o.accepted ? '✅' : '⏳'}</button>
         <span class="dotmark ${OSTATUS[o.status].c || 'warn'}" title="${OSTATUS[o.status].t}"></span>
       </div>`).join('')}
     </div></div>
-    <button class="btn ok block" data-act="deliverall">✅ সবাইকে দিয়ে দিয়েছি</button>` : ''}
+    ${orders.some((o) => !o.accepted && o.status !== 'cancelled')
+      ? `<button class="btn block" data-act="acceptall">✅ সবার অর্ডার গ্রহণ করলাম</button>` : ''}
+    <button class="btn ok block" data-act="deliverall" style="margin-top:8px">✅ সবাইকে দিয়ে দিয়েছি</button>` : ''}
   `, { title: 'আজকের অর্ডার', sub: niceDate(date) });
 
   $('#daypick')?.addEventListener('change', (e) => { S.date = e.target.value; viewToday(); });
 }
 
-/** দোকান ধরে কোন জিনিস কয়টা — দোকানে গিয়ে এক নজরে দেখার জন্য */
+/**
+ * দোকান ধরে কোন জিনিস কয়টা — দিনের এখনকার আসল ছবি।
+ * কোনো জিনিস পাওয়া না গেলে সেটার বদলে যা আনা হয়েছে সেটাই গোনা হয়,
+ * নইলে পাশের "টাকা" ঘরের অঙ্কের সাথে মিলত না।
+ */
 function liveTotals(orders) {
   const shops = new Map();
   for (const o of orders) {
@@ -937,11 +1049,16 @@ function liveTotals(orders) {
     if (!shops.has(key)) shops.set(key, { shop: key, qty: 0, amount: 0, map: new Map() });
     const sh = shops.get(key);
     for (const l of o.lines) {
-      const k = `${l.item_name}|${l.option_name}`;
-      if (!sh.map.has(k)) sh.map.set(k, { name: l.item_name, option: l.option_name, qty: 0 });
-      sh.map.get(k).qty += l.qty;
-      sh.qty += l.qty;
-      sh.amount += l.subtotal;
+      if (l.missing && !Number(l.sub_qty)) continue;   // পাওয়া যায়নি, কিছুই আনা হয়নি
+      const name = l.missing ? l.sub_name : l.item_name;
+      const option = l.missing ? '' : l.option_name;
+      const qty = l.missing ? l.sub_qty : l.qty;
+      const amount = Number(l.missing ? l.sub_subtotal : l.subtotal);
+      const k = `${name}|${option}`;
+      if (!sh.map.has(k)) sh.map.set(k, { name, option, qty: 0 });
+      sh.map.get(k).qty += qty;
+      sh.qty += qty;
+      sh.amount += amount;
     }
   }
   return [...shops.values()]
@@ -977,13 +1094,17 @@ function orderDetailSheet(orderId) {
       <div class="banner info"><span class="ic">🏪</span><div>${esc(o.shop_name || 'দোকান বলা হয়নি')}
         <small>PIN ${bn(o.pin || '—')}${o.user_floor ? ` · ${bn(o.user_floor)}য় তলা` : ''} · মোট ${tk(o.total)}</small></div></div>
       <div class="card"><div class="card-b tight">
-        ${o.lines.map((l) => `<div class="item">
-          <div class="ava">${emojiFor(l.item_name)}</div>
+        ${o.lines.map((l) => `<div class="item ${l.missing ? 'gone' : ''}">
+          <div class="ava">${l.missing ? '🔁' : emojiFor(l.item_name)}</div>
           <div class="info">
             <div class="nm">${esc(l.item_name)}${l.option_name ? ` <span class="chip brand">${esc(l.option_name)}</span>` : ''} × ${bn(l.qty)}</div>
-            ${l.fallback_type !== 'skip' || l.fallback_note ? `<div class="pr">⚙ ${esc(fbTextOf(l))}</div>` : ''}
+            ${l.missing ? `<div class="pr">${esc(subTextOf(l))}</div>`
+              : l.fallback_type !== 'skip' || l.fallback_note ? `<div class="pr">⚙ ${esc(fbTextOf(l))}</div>` : ''}
           </div>
-          <b class="amt">${tk(l.subtotal)}</b>
+          <b class="amt">${tk(l.missing ? l.sub_subtotal : l.subtotal)}</b>
+          <!-- ক্লাসের নাম "info" দেওয়া যাবে না — .item .info এর সাথে লেগে বাটনটা চওড়া হয়ে যায় -->
+          <button class="btn sm ${l.missing ? 'primary' : ''}" data-act="subline" data-id="${l.id}"
+            title="দোকানে পাওয়া যায়নি? বদলি বসিয়ে দিন">🔁</button>
         </div>`).join('')}
         ${o.note ? `<div class="item"><div class="info"><div class="pr">📝 ${esc(o.note)}</div></div></div>` : ''}
       </div></div>
@@ -993,7 +1114,9 @@ function orderDetailSheet(orderId) {
         </select></div>
     </div>`,
     footer: `<div class="btn-row">
-      <button class="btn" data-act="orderforpick" data-id="${o.user_id}" data-name="${esc(o.user_name)}">✏️ অর্ডার বদলান</button>
+      <button class="btn ${o.accepted ? '' : 'ok'}" data-act="accept" data-id="${o.id}"
+        data-v="${o.accepted ? 0 : 1}">${o.accepted ? '↩ গ্রহণ ফিরিয়ে নিন' : '✅ গ্রহণ করলাম'}</button>
+      <button class="btn" data-act="orderforpick" data-id="${o.user_id}" data-name="${esc(o.user_name)}">✏️ বদলান</button>
       <button class="btn primary" data-act="closesheet">বুঝেছি</button>
     </div>`,
   });
@@ -1003,6 +1126,74 @@ function fbTextOf(l) {
   const base = l.fallback_type === 'item' ? `না পেলে → ${l.fallback_name}`
     : l.fallback_type === 'anything' ? 'না পেলে যেকোনো কিছু' : 'না পেলে নেব না';
   return l.fallback_note ? `${base} · ${l.fallback_note}` : base;
+}
+
+/**
+ * দোকানে জিনিসটা পাওয়া যায়নি — বদলে যা আনা হলো সেটা ওই ব্যক্তির নামেই বসিয়ে দেওয়া।
+ * মূল জিনিসের দাম বাদ যায়, বদলিটার দামই তার হিসাবে ওঠে।
+ */
+function subSheet(lineId) {
+  let line = null, ord = null;
+  for (const o of S.cache.orders || []) {
+    const l = (o.lines || []).find((x) => x.id === lineId);
+    if (l) { line = l; ord = o; break; }
+  }
+  if (!line) return;
+
+  const why = line.fallback_type === 'anything' ? '“না পেলে যেকোনো কিছু”'
+    : line.fallback_type === 'item' ? `“না পেলে ${line.fallback_name}”`
+    : '“না পেলে নেব না”';
+  const items = S.items.filter((i) => i.active);
+  // "না পেলে অমুকটা" বলা থাকলে সেটাই আগে থেকে বাছা থাকুক — একটা ক্লিক কম
+  const preId = line.sub_item_id || (line.fallback_type === 'item' ? line.fallback_item_id : null);
+
+  sheet({
+    title: `🔁 ${esc(line.item_name)} পাওয়া যায়নি?`,
+    body: `
+      <div class="banner ${line.fallback_type === 'skip' ? 'warn' : 'info'}"><span class="ic">💬</span><div>
+        ${esc(ord.user_name)} বলে রেখেছেন — ${esc(why)}
+        <small>${line.fallback_type === 'skip'
+          ? 'উনি কিছু নিতে চাননি — তবু কিছু আনলে নিচে বসিয়ে দিন'
+          : 'বদলে যা আনলেন নিচে বসিয়ে দিন, দামটা ওর নামেই যাবে'}</small></div></div>
+      <div class="field"><label>বদলে কী আনলেন?</label>
+        <select class="input" id="sb_item">
+          <option value="">— তালিকার বাইরে / কিছুই আনিনি —</option>
+          ${items.map((i) => `<option value="${i.id}" data-p="${i.price}"
+            ${preId === i.id ? 'selected' : ''}>${esc(i.name)} · ${tk(i.price)}</option>`).join('')}
+        </select></div>
+      <div class="field"><label>তালিকায় নেই? নামটা লিখে দিন</label>
+        <input class="input" id="sb_other" value="${esc(line.sub_item_id ? '' : line.sub_name || '')}"
+          placeholder="যেমন: নিমকি" /></div>
+      <div class="row2">
+        <div class="field"><label>কয়টা</label>
+          <input class="input" id="sb_qty" type="number" min="0" max="99"
+            value="${line.sub_qty || line.qty}" /></div>
+        <div class="field"><label>দাম (একটার)</label>
+          <input class="input" id="sb_price" type="number" step="0.5" inputmode="decimal"
+            value="${line.sub_unit_price || ''}" placeholder="আইটেম বাছলে নিজেই বসবে" /></div>
+      </div>
+      <div class="field"><label>বাড়তি কথা (ইচ্ছা হলে)</label>
+        <input class="input" id="sb_note" value="${esc(line.sub_note || '')}"
+          placeholder="যেমন: সিঙ্গারা শেষ হয়ে গিয়েছিল" /></div>
+      <div class="hint">মূল ${esc(line.item_name)}-এর ${tk(line.subtotal)} বাদ যাবে, বদলিটার দামই বসবে।
+        কিছুই না আনলে নাম-দাম খালি রাখুন — তখন ০ টাকা ধরা হবে।</div>`,
+    footer: `<div class="btn-row">
+      ${line.missing ? `<button class="btn" data-act="subclear" data-id="${line.id}">↩ আসলে পাওয়া গেছে</button>` : ''}
+      <button class="btn primary" data-act="subsave" data-id="${line.id}">বসিয়ে দিন</button>
+    </div>`,
+    onOpen: () => {
+      // আইটেম বাছলে তার দামটা নিজে থেকেই বসে যাক
+      const sel = $('#sb_item'), pr = $('#sb_price');
+      sel?.addEventListener('change', () => {
+        const p = sel.selectedOptions[0]?.dataset.p;
+        pr.value = p ? Number(p) : '';
+      });
+      if (!pr.value) {
+        const p = sel?.selectedOptions[0]?.dataset.p;
+        if (p) pr.value = Number(p);
+      }
+    },
+  });
 }
 
 /** অর্ডার নেওয়ার সময় হাতে যত টাকা দিল — এক চাপে লিখে রাখা */
@@ -1248,13 +1439,22 @@ function paintPlating() {
                 <div class="buy-nm">${esc(o.user_name)}${o.floor && !S.floor && isAdmin()
                   ? ` <span class="chip">${bn(o.floor)}য়</span>` : ''}</div>
                 <div style="margin-top:4px">
-                  ${o.lines.map((l) => `<div class="plate-line">
-                    <b>${bn(l.qty)}×</b>
-                    <span>${emojiFor(l.item_name)} ${esc(l.item_name)}${
-                      l.option_name ? ` <span class="chip brand">${esc(l.option_name)}</span>` : ''}</span>
-                  </div>`).join('')}
+                  ${o.lines.map((l) => l.missing
+                    // পাওয়া যায়নি — হাতে যাবে বদলি জিনিসটাই, তাই সেটাই বড় করে
+                    ? (Number(l.sub_qty) ? `<div class="plate-line">
+                        <b>${bn(l.sub_qty)}×</b>
+                        <span>🔁 ${esc(l.sub_name)} <span class="chip info">বদলি</span>
+                          <s style="opacity:.55">${esc(l.item_name)}</s></span>
+                      </div>` : `<div class="plate-line">
+                        <b>—</b><span><s style="opacity:.55">${esc(l.item_name)}</s>
+                          <span class="chip warn">পাওয়া যায়নি</span></span></div>`)
+                    : `<div class="plate-line">
+                        <b>${bn(l.qty)}×</b>
+                        <span>${emojiFor(l.item_name)} ${esc(l.item_name)}${
+                          l.option_name ? ` <span class="chip brand">${esc(l.option_name)}</span>` : ''}</span>
+                      </div>`).join('')}
                 </div>
-                ${o.lines.filter((l) => l.fallback_type !== 'skip' || l.fallback_note)
+                ${o.lines.filter((l) => !l.missing && (l.fallback_type !== 'skip' || l.fallback_note))
                   .map((l) => `<div class="buy-fb">⚙ ${esc(l.item_name)}: ${esc(fbTextOf(l))}</div>`).join('')}
                 ${o.note ? `<div class="buy-fb" style="background:var(--gold-soft);color:var(--gold)">📝 ${esc(o.note)}</div>` : ''}
                 <div class="buy-sub" style="margin-top:4px">দাম ${tk(o.total)}${
@@ -1787,7 +1987,9 @@ document.addEventListener('click', async (e) => {
                     ${String(n.updated_at) > seen ? 'background:var(--brand-soft)' : ''}">
                   <div class="ava">${esc((n.user_name || '?').trim()[0])}</div>
                   <div class="grow">
-                    <div class="nm">${esc(n.user_name)} ${String(n.updated_at) > seen ? '<span class="chip brand">নতুন</span>' : ''}</div>
+                    <div class="nm">${esc(n.user_name)} ${String(n.updated_at) > seen ? '<span class="chip brand">নতুন</span>' : ''}${
+                      n.accepted_at || n.status === 'purchased' || n.status === 'delivered'
+                        ? ' <span class="chip ok">✅ গৃহীত</span>' : ' <span class="chip warn">⏳</span>'}</div>
                     <div class="sub">PIN ${bn(n.pin || '—')}${n.floor ? ` · ${bn(n.floor)}য় তলা` : ''}
                       · ${bn(n.qty)} টি · 🏪 ${esc(n.shop_name || '—')}</div>
                     <div class="sub">${esc(String(n.updated_at).slice(11, 16))}</div>
@@ -1914,6 +2116,51 @@ document.addEventListener('click', async (e) => {
         paintPlating();
         return;
       }
+      // স্টাফ অর্ডারটা গ্রহণ করলেন — ইউজার সাথে সাথেই দেখতে পাবেন
+      case 'accept': {
+        e.stopPropagation();
+        const on = Number(el.dataset.v) === 1;
+        await api(`/api/orders/${id}/accept`, { method: 'PATCH', body: { accepted: on } });
+        toast(on ? '✅ গ্রহণ করা হলো' : '↩ গ্রহণ ফিরিয়ে নেওয়া হলো', 'ok');
+        closeSheet();
+        return viewToday();
+      }
+      case 'acceptall': {
+        const left = (S.cache.orders || []).filter((o) => !o.accepted && o.status !== 'cancelled');
+        if (!left.length) return toast('সব অর্ডারই গ্রহণ করা আছে', 'ok');
+        if (!confirm(`${bn(left.length)} টি অর্ডার গ্রহণ করে নেবেন?`)) return;
+        for (const o of left) await api(`/api/orders/${o.id}/accept`, { method: 'PATCH', body: { accepted: true } });
+        toast(`✅ ${bn(left.length)} টি অর্ডার গ্রহণ করা হলো`, 'ok');
+        return viewToday();
+      }
+
+      // পাওয়া যায়নি → বদলি
+      case 'subline': e.stopPropagation(); return subSheet(id);
+      case 'subsave': {
+        const itemId = Number($('#sb_item')?.value) || null;
+        const other = ($('#sb_other')?.value || '').trim();
+        const priceRaw = $('#sb_price')?.value ?? '';
+        if (!itemId && other && priceRaw === '') return toast('বদলি জিনিসটার দাম দিন', 'err');
+        await api(`/api/order-lines/${id}/substitute`, {
+          method: 'PATCH',
+          body: {
+            missing: true,
+            item_id: itemId,
+            name: itemId ? null : (other || null),
+            qty: Number($('#sb_qty')?.value) || 0,
+            unit_price: priceRaw === '' ? null : Number(priceRaw),
+            note: $('#sb_note')?.value || '',
+          },
+        });
+        toast('🔁 বসিয়ে দেওয়া হলো', 'ok');
+        closeSheet(); return viewToday();
+      }
+      case 'subclear': {
+        await api(`/api/order-lines/${id}/substitute`, { method: 'PATCH', body: { missing: false } });
+        toast('↩ আগের মতোই করা হলো', 'ok');
+        closeSheet(); return viewToday();
+      }
+
       case 'availsheet': return availSheet();
       case 'orderdetail': return orderDetailSheet(id);
       case 'avail': {

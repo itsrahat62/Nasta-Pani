@@ -199,6 +199,28 @@ CREATE INDEX IX_ledger_user ON dbo.ledger(user_id);
         "IF COL_LENGTH('dbo.users', 'usual_json') IS NULL ALTER TABLE dbo.users ADD usual_json NVARCHAR(MAX) NULL;",
         @"IF COL_LENGTH('dbo.day_status', 'floor') IS NULL
           ALTER TABLE dbo.day_status ADD floor INT NOT NULL CONSTRAINT DF_ds_floor_mig DEFAULT 0;",
+
+        // ---- স্টাফ অর্ডারটা "দেখেছি, নিলাম" বললে ----
+        // ইউজার যেন বুঝতে পারে তার অর্ডার আসলে গৃহীত হয়েছে কি না
+        "IF COL_LENGTH('dbo.orders', 'accepted_at') IS NULL ALTER TABLE dbo.orders ADD accepted_at NVARCHAR(20) NULL;",
+        "IF COL_LENGTH('dbo.orders', 'accepted_by') IS NULL ALTER TABLE dbo.orders ADD accepted_by INT NULL;",
+
+        // ---- জিনিসটা পাওয়া গেল না, বদলে অন্য কিছু আনা হলো ----
+        // "না পেলে যেকোনো কিছু" বলা থাকলে স্টাফ তার নামে বদলি জিনিসটা বসিয়ে দেন।
+        // তখন দামও বদলি জিনিসটার ধরা হয় — মূল জিনিসের দাম আর গোনা হয় না।
+        @"IF COL_LENGTH('dbo.order_lines', 'missing') IS NULL
+          ALTER TABLE dbo.order_lines ADD missing BIT NOT NULL CONSTRAINT DF_ln_missing DEFAULT 0;",
+        "IF COL_LENGTH('dbo.order_lines', 'sub_item_id') IS NULL ALTER TABLE dbo.order_lines ADD sub_item_id INT NULL;",
+        @"IF COL_LENGTH('dbo.order_lines', 'sub_name') IS NULL
+          ALTER TABLE dbo.order_lines ADD sub_name NVARCHAR(100) NOT NULL CONSTRAINT DF_ln_subnm DEFAULT N'';",
+        @"IF COL_LENGTH('dbo.order_lines', 'sub_unit_price') IS NULL
+          ALTER TABLE dbo.order_lines ADD sub_unit_price DECIMAL(10,2) NOT NULL CONSTRAINT DF_ln_subunit DEFAULT 0;",
+        @"IF COL_LENGTH('dbo.order_lines', 'sub_qty') IS NULL
+          ALTER TABLE dbo.order_lines ADD sub_qty INT NOT NULL CONSTRAINT DF_ln_subqty DEFAULT 0;",
+        @"IF COL_LENGTH('dbo.order_lines', 'sub_subtotal') IS NULL
+          ALTER TABLE dbo.order_lines ADD sub_subtotal DECIMAL(10,2) NOT NULL CONSTRAINT DF_ln_subsub DEFAULT 0;",
+        @"IF COL_LENGTH('dbo.order_lines', 'sub_note') IS NULL
+          ALTER TABLE dbo.order_lines ADD sub_note NVARCHAR(200) NOT NULL CONSTRAINT DF_ln_subnote DEFAULT N'';",
         // পুরোনো day_status-এ day ছিল প্রাইমারি কি — এখন (day, floor) মিলে ইউনিক
         @"DECLARE @pk NVARCHAR(200);
           SELECT @pk = kc.name
