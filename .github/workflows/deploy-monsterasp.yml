@@ -73,10 +73,15 @@ jobs:
           FTP_USER: ${{ secrets.MONSTERASP_FTP_USER }}
           FTP_PASS: ${{ secrets.MONSTERASP_FTP_PASSWORD }}
         run: |
+          # ⚠️ --ignore-time দেওয়া যাবে না। ওটা দিলে lftp শুধু ফাইলের সাইজ মিলিয়ে দেখে,
+          # তাই সমান-সাইজের বদল (যেমন sw.js-এ nasta-v2 → nasta-v3, বা একটা অঙ্ক বদলানো)
+          # চুপচাপ আপলোডই হতো না — সার্ভারে পুরোনো ফাইলটাই থেকে যেত।
+          # checkout করলে সব ফাইলের সময় "এখন" হয়ে যায়, তাই প্রতি ডিপ্লয়ে সব যায় —
+          # একটু সময় বেশি লাগে, কিন্তু যা পুশ করেছি সেটাই লাইভে যায়, এটাই জরুরি।
           lftp -u "$FTP_USER,$FTP_PASS" "ftp://$FTP_HOST" -e "
             set ftp:ssl-allow no; set net:timeout 25; set net:max-retries 3;
             set mirror:parallel-transfer-count 4;
-            mirror -R --ignore-time --no-perms \
+            mirror -R --no-perms \
               --exclude-glob appsettings.Production.json \
               --exclude-glob app_offline.htm \
               --exclude logs/ \
