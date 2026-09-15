@@ -68,10 +68,15 @@ function emojiFor(name) {
 }
 
 function toast(msg, kind = '') {
+  const box = $('#toasts');
+  // একই কথা পাশাপাশি দুবার নয়, আর একসাথে দুটোর বেশি জমতেও দেওয়া হয় না —
+  // নইলে টোস্ট জমে পর্দার নিচের অংশটাই ঢেকে যায়
+  if ([...box.children].some((c) => c.textContent === msg)) return;
+  while (box.children.length >= 2) box.firstChild.remove();
   const el = document.createElement('div');
   el.className = 'toast ' + kind;
   el.textContent = msg;
-  $('#toasts').appendChild(el);
+  box.appendChild(el);
   setTimeout(() => {
     el.style.transition = 'opacity .3s';
     el.style.opacity = '0';
@@ -111,6 +116,8 @@ const S = {
   usual: null,
   notif: [],            // স্টাফের ঘণ্টা — আজকের অর্ডারগুলো
   notifUnseen: 0,
+  announced: new Set(), // যাদের অর্ডারের কথা একবার বলা হয়ে গেছে (এই সেশনে আর বলবে না)
+  statusScope: undefined, // statusVersion কোন তলার জন্য গোনা — তলা বদলালে চুপচাপ মিলিয়ে নেয়
 };
 
 /** সুপার অ্যাডমিন কোনো তলা বেছে নিলে সেটা কোয়েরিতে জুড়ে দেয় */
@@ -167,6 +174,7 @@ async function boot() {
   }
   S.date = S.date || S.boot.today;
   S.statusVersion = S.boot.status?.version ?? null;
+  S.statusScope = S.floor ?? S.boot.user?.floor ?? null;
   if (!S.boot.user) return renderAuth();
   if (!isStaff() && ['today', 'shops'].includes(S.tab)) S.tab = 'order';
   // স্টাফ ঢুকলেই আজকের তালিকা; নিজের অর্ডার পাতা তার লাগে না
@@ -185,19 +193,32 @@ function markSeen() {
   S.notifUnseen = 0;
 }
 
-/** নতুন অর্ডার এলে ঘণ্টায় সংখ্যা বসায়; শুধু নিজের তলারটাই আসে */
+/**
+ * নতুন অর্ডার এলে ঘণ্টায় সংখ্যা বসায়; শুধু নিজের তলারটাই আসে।
+ *
+ * ঘণ্টার সংখ্যাটা localStorage-এর "কতটুকু দেখা হয়েছে" ধরে গোনা হয়।
+ * কিন্তু টোস্টটা কখনোই ওটার উপর ভরসা করে না — কার অর্ডারের কথা একবার বলা
+ * হয়ে গেছে সেটা মনে (S.announced) রাখা হয়। নইলে localStorage বন্ধ থাকলে
+ * (প্রাইভেট উইন্ডো, সাইট-ডেটা ব্লক করা ফোন) ঘণ্টা খোলার পরেই আবার
+ * "অমুকে অর্ডার দিয়েছেন" ভেসে উঠত — বারবার।
+ */
 async function fetchNotifs({ announce = false } = {}) {
   if (!isStaff()) return;
   try {
     const r = await api(`/api/notifications?date=${S.boot.today}${fq()}`);
-    const before = S.notifUnseen;
     S.notif = r.items || [];
     const seen = getSeen();
     S.notifUnseen = S.notif.filter((x) => String(x.updated_at) > seen).length;
-    if (announce && S.notifUnseen > before) {
-      const fresh = S.notif.find((x) => String(x.updated_at) > seen);
-      if (fresh) toast(`🔔 ${fresh.user_name} অর্ডার দিয়েছেন`, 'ok');
+
+    const fresh = S.notif.filter((x) => !S.announced.has(x.id));
+    if (announce && fresh.length) {
+      // একসাথে অনেকে দিলে একটা টোস্টেই বলা হয় — পর্দা ভরে যায় না
+      toast(fresh.length === 1
+        ? `🔔 ${fresh[0].user_name} অর্ডার দিয়েছেন`
+        : `🔔 ${bn(fresh.length)} জন নতুন অর্ডার দিয়েছেন`, 'ok');
     }
+    // প্রথম বারেও (announce ছাড়া) মনে রাখা হয়, নইলে পরের পোলেই পুরোনোগুলো নতুন মনে হতো
+    for (const x of S.notif) S.announced.add(x.id);
     const b = document.querySelector('[data-act="notif"] .badge');
     const btn = document.querySelector('[data-act="notif"]');
     if (btn) {
@@ -217,10 +238,16 @@ function startPolling() {
       const r = await api(`/api/status${fq('?')}`);
       const v = r.status?.version ?? null;
       S.boot.now = r.now;
-      if (v !== S.statusVersion) {
+      // অবস্থাটা কোন তলার, সেটাও হিসাবে রাখতে হয়। অ্যাডমিন তলা বদলালে
+      // অন্য তলার version আসে — ওটা "অবস্থা বদলেছে" নয়, তাই চুপচাপ মিলিয়ে নেওয়া হয়।
+      const scope = S.floor ?? S.boot.user.floor ?? null;
+      const rescoped = S.statusScope !== scope;
+      S.statusScope = scope;
+      if (v !== S.statusVersion || rescoped) {
+        const changed = !rescoped && v !== S.statusVersion;
         S.statusVersion = v;
         S.boot.status = r.status;
-        if (r.status) toast(`${r.status.icon} ${r.status.label}`, 'ok');
+        if (changed && r.status) toast(`${r.status.icon} ${r.status.label}`, 'ok');
         if (!$('#sheet')) render();
       }
     } catch { /* চুপচাপ */ }
@@ -394,6 +421,11 @@ async function viewOrder() {
   const has = (id) => shops.some((s) => s.id === id);
   S.shopId = [mine.order?.shop_id, mine.default_shop_id, mine.usual?.shop_id]
     .find((id) => id != null && has(id)) ?? (shops[0]?.id ?? null);
+  // বাছা দোকানের মেনু খালি হলে যেটায় জিনিস আছে সেটাই খুলুক — খালি পাতা দেখিয়ে লাভ নেই
+  if (!items.some((it) => soldHere(it, S.shopId))) {
+    const stocked = shops.find((s) => items.some((it) => soldHere(it, s.id)));
+    if (stocked) S.shopId = stocked.id;
+  }
 
   S.cart = new Map();
   if (mine.order) {
@@ -409,11 +441,22 @@ async function viewOrder() {
   paintOrder();
 }
 
-/** বেছে নেওয়া দোকানে এই জিনিসের দাম — দোকানের আলাদা দাম না থাকলে সাধারণ দাম */
+/** বেছে নেওয়া দোকানে এই জিনিসের দাম। দাম বসানো না থাকলে জিনিসটা ওই দোকানে নেই। */
 function priceOf(it) {
   const sp = it.shop_prices || {};
-  if (S.shopId != null && sp[S.shopId] != null) return Number(sp[S.shopId]);
-  return Number(it.price);
+  return S.shopId != null && sp[S.shopId] != null ? Number(sp[S.shopId]) : 0;
+}
+/** এই দোকানে জিনিসটা পাওয়া যায় কি না — দাম বসানো থাকলেই পাওয়া যায় */
+function soldHere(it, shopId = S.shopId) {
+  return shopId != null && (it.shop_prices || {})[shopId] != null;
+}
+/** চালু দোকানগুলো — বন্ধ দোকান দাম বসানোর জায়গায় দেখানোর দরকার নেই */
+const liveShops = () => (S.shops || []).filter((s) => s.active);
+/** কোন কোন দোকানে পাওয়া যায়, দামসহ — "Hotel Star ৳১০ · Prince ৳১২" */
+function shopPriceText(it) {
+  const sp = it.shop_prices || {};
+  const bits = liveShops().filter((s) => sp[s.id] != null).map((s) => `${s.name} ${tk(sp[s.id])}`);
+  return bits.length ? bits.join(' · ') : 'কোনো দোকানে দাম বসানো হয়নি';
 }
 /** এই জিনিসে কিছু না বাছলে যে রকমটা ধরা হবে */
 function defaultOption(it) {
@@ -447,13 +490,20 @@ function paintOrder() {
     ? saved.lines.reduce((s, l) => s + (l.missing ? l.sub_qty : l.qty), 0)
     : [...S.cart.values()].reduce((s, l) => s + l.qty, 0);
 
-  // বেছে নেওয়া দোকানে যেগুলো পাওয়াই যায় না, সেগুলো দেখানোর দরকার নেই
-  const sold = (it) => !(it.shop_missing || []).includes(S.shopId);
-  const menu = S.items.filter(sold);
+  // এই দোকানে যেগুলোর দাম বসানো নেই, সেগুলো এই দোকানে পাওয়াই যায় না
+  const menu = S.items.filter((it) => soldHere(it));
   const cats2 = [...new Set(menu.map((i) => i.category))];
 
+  const shopName = (S.shops || []).find((s) => s.id === S.shopId)?.name || 'এই দোকান';
   // পিসিতে এই মোড়কটাই দুই কলাম হয়ে যায় (CSS-এ) — স্ক্রল কমে, চওড়া ফাঁকা জায়গাও থাকে না
-  const body = `<div class="menu-grid">${cats2.map((cat, ci) => {
+  const body = menu.length === 0
+    ? `<div class="empty"><div class="big">🏪</div>
+        <b>${esc(shopName)}</b>-এ এখনো কোনো জিনিসের দাম বসানো হয়নি
+        <div class="hint" style="margin-top:8px">${isStaff()
+          ? 'দোকান ও দাম পাতায় গিয়ে এই দোকানে কী কী পাওয়া যায় আর কত দাম, সেটা বসিয়ে দিন।'
+          : 'স্টাফকে বলুন এই দোকানের দামগুলো বসিয়ে দিতে — নইলে অন্য দোকান বেছে নিন।'}</div>
+      </div>`
+    : `<div class="menu-grid">${cats2.map((cat, ci) => {
     const list = menu.filter((i) => i.category === cat);
     return `
       <section style="${accent(ci)}">
@@ -680,7 +730,8 @@ function fbSheet(key) {
   const l = S.cart.get(key);
   if (!l) return;
   const it = S.items.find((i) => i.id === l.item_id);
-  const others = S.items.filter((i) => i.id !== l.item_id);
+  // বদলি হিসেবে শুধু এই দোকানে যা পাওয়া যায় সেগুলোই দেখানো যায়
+  const others = S.items.filter((i) => i.id !== l.item_id && soldHere(i));
   sheet({
     title: `${esc(it.name)} না থাকলে?`,
     body: `
@@ -700,7 +751,7 @@ function fbSheet(key) {
       <div class="field" id="fbitemwrap" style="display:${l.fallback_type === 'item' ? 'block' : 'none'}">
         <label>বদলে কোনটা?</label>
         <select class="input" id="fbitem">
-          ${others.map((o) => `<option value="${o.id}" ${o.id === l.fallback_item_id ? 'selected' : ''}>${esc(o.name)} — ${tk(o.price)}</option>`).join('')}
+          ${others.map((o) => `<option value="${o.id}" ${o.id === l.fallback_item_id ? 'selected' : ''}>${esc(o.name)} — ${tk(priceOf(o))}</option>`).join('')}
         </select>
       </div>
       <div class="field">
@@ -1143,6 +1194,8 @@ function subSheet(lineId) {
   const why = line.fallback_type === 'anything' ? '“না পেলে যেকোনো কিছু”'
     : line.fallback_type === 'item' ? `“না পেলে ${line.fallback_name}”`
     : '“না পেলে নেব না”';
+  // অর্ডারটা যে দোকান থেকে, ওই দোকানের দামই ধরা হয়
+  const sp = (it) => (it.shop_prices || {})[ord.shop_id];
   const items = S.items.filter((i) => i.active);
   // "না পেলে অমুকটা" বলা থাকলে সেটাই আগে থেকে বাছা থাকুক — একটা ক্লিক কম
   const preId = line.sub_item_id || (line.fallback_type === 'item' ? line.fallback_item_id : null);
@@ -1158,8 +1211,9 @@ function subSheet(lineId) {
       <div class="field"><label>বদলে কী আনলেন?</label>
         <select class="input" id="sb_item">
           <option value="">— তালিকার বাইরে / কিছুই আনিনি —</option>
-          ${items.map((i) => `<option value="${i.id}" data-p="${i.price}"
-            ${preId === i.id ? 'selected' : ''}>${esc(i.name)} · ${tk(i.price)}</option>`).join('')}
+          ${items.map((i) => `<option value="${i.id}" data-p="${sp(i) ?? ''}"
+            ${preId === i.id ? 'selected' : ''}>${esc(i.name)}${
+              sp(i) != null ? ` · ${tk(sp(i))}` : ' · এই দোকানে দাম বসানো নেই'}</option>`).join('')}
         </select></div>
       <div class="field"><label>তালিকায় নেই? নামটা লিখে দিন</label>
         <input class="input" id="sb_other" value="${esc(line.sub_item_id ? '' : line.sub_name || '')}"
@@ -1583,7 +1637,7 @@ function viewMore() {
     </div>
 
     ${isStaff() ? `<div class="section-title">${isAdmin() ? 'অ্যাডমিন' : 'স্টাফ'}</div><div class="card"><div class="card-b tight">
-      ${row('tab" data-k="items', '🍱', 'আইটেম ও রকম', 'নতুন আইটেম, রকম, সাধারণ দাম')}
+      ${row('tab" data-k="items', '🍱', 'আইটেম ও রকম', 'নতুন আইটেম, রকম, দোকান ধরে দাম')}
       ${row('tab" data-k="users', '👥', 'ইউজার ও স্টাফ', isAdmin() ? 'নতুন তৈরি করুন, PIN ও রোল বদলান' : 'কে কে আছেন')}
       ${isAdmin() ? row('tab" data-k="settings', '⚙️', 'সেটিংস', 'সময়সীমা, রেজিস্ট্রেশন, হিসাব মডিউল') : ''}
     </div></div>` : ''}
@@ -1633,14 +1687,15 @@ async function viewShops() {
             <div class="ava">🏪</div>
             <div class="grow">
               <div class="nm">${esc(s.name)} ${s.active ? '' : '<span class="chip warn">বন্ধ</span>'}</div>
-              <div class="sub">${n ? `${bn(n)} টি জিনিসের আলাদা দাম দেওয়া আছে` : 'সব জিনিসেই সাধারণ দাম'}</div>
+              <div class="sub">${n ? `${bn(n)} টি জিনিস পাওয়া যায়`
+                : '<span style="color:var(--warn)">কিছুই যোগ করা হয়নি — মেনু খালি</span>'}</div>
             </div>
             <span class="go">›</span>
           </div>`;
         }).join('')}
       </div></div>`}
-    <p class="hint center">একই জিনিসের একেক দোকানে একেক দাম হলে এখানে বসিয়ে দিন।<br>
-      যে ঘর খালি রাখবেন, সেটায় সাধারণ দামই ধরা হবে।</p>
+    <p class="hint center">প্রতিটা দোকানের নিজের মেনু — যে জিনিসের দাম বসাবেন, শুধু সেটাই ওই দোকানে দেখাবে।<br>
+      একই জিনিসের একেক দোকানে একেক দাম দিতে পারবেন।</p>
   `, { title: 'দোকান ও দাম' });
 }
 
@@ -1656,28 +1711,29 @@ function shopEditSheet(id) {
       ${id ? `<label class="check"><input type="checkbox" id="s_active" ${s.active ? 'checked' : ''} /> দোকানটা চালু আছে</label>
       <button class="btn block" data-act="newitemhere" data-id="${id}" style="margin-bottom:12px">
         + এই দোকানের নতুন আইটেম (দামসহ)</button>
-      <div class="section-title" style="margin-left:0">এই দোকানে কোনটার কত</div>
+      <div class="section-title" style="margin-left:0">এই দোকানে কী কী পাওয়া যায়</div>
+      <div class="chip-row" style="margin-bottom:10px">
+        <button class="btn sm" data-act="shopclearall">সব ঘর খালি করুন</button>
+        <span class="hint" style="margin:0;align-self:center">যেগুলোর দাম বসাবেন, শুধু সেগুলোই এই দোকানে দেখাবে</span>
+      </div>
       <div class="card"><div class="card-b tight">
         ${items.map((it) => {
           const p = it.shop_prices ? it.shop_prices[s.id] : null;
-          const missing = (it.shop_missing || []).includes(s.id);
-          return `<div class="item">
+          return `<div class="item ${p == null ? 'off' : ''}">
             <div class="ava">${emojiFor(it.name)}</div>
             <div class="info"><div class="nm">${esc(it.name)}</div>
-              <div class="pr">সাধারণ দাম ${tk(it.price)}</div>
-              <label class="chip ${missing ? 'warn' : ''}" style="margin-top:4px;cursor:pointer">
-                <input type="checkbox" class="missinput" data-item="${it.id}" ${missing ? 'checked' : ''}
-                  style="width:14px;height:14px;margin:0" /> এখানে নেই
-              </label>
+              <div class="pr">${esc(it.category)}</div>
             </div>
-            <input class="input priceinput" data-item="${it.id}" type="number" step="0.5" inputmode="decimal"
-              style="width:98px;text-align:right;padding:9px 11px" value="${p != null ? p : ''}" placeholder="${it.price}" />
+            <input class="input priceinput" data-item="${it.id}" type="number" step="0.5" min="0" inputmode="decimal"
+              style="width:104px;text-align:right;padding:9px 11px" value="${p != null ? p : ''}"
+              placeholder="নেই" title="দাম বসালে এই দোকানে পাওয়া যাবে; খালি রাখলে নেই" />
           </div>`;
         }).join('')}
       </div></div>
-      <div class="hint">দামের ঘর খালি রাখলে সাধারণ দামই চলবে।
-        "এখানে নেই" দিলে এই দোকান বাছলে জিনিসটা মেনুতেই দেখাবে না।</div>`
-      : `<div class="hint">দোকানটা সেভ করার পর প্রতিটা জিনিসের দাম বসাতে পারবেন।</div>`}`,
+      <div class="hint"><b>দাম বসানো = এই দোকানে পাওয়া যায়।</b> ঘর খালি রাখলে বা ০ দিলে
+        এই দোকান বাছলে জিনিসটা মেনুতেই দেখাবে না — ইউজার আর স্টাফ দুজনের কাছেই।</div>`
+      : `<div class="hint">দোকানটা সেভ করার পর ঠিক করবেন এখানে কী কী পাওয়া যায় আর কত দাম।
+          <b>নতুন দোকান খালি দিয়েই শুরু হয়</b> — যা যা যোগ করবেন, শুধু সেগুলোই দেখাবে।</div>`}`,
     footer: `<div class="btn-row">
       ${id ? `<button class="btn danger" data-act="shopdel" data-id="${id}">মুছুন</button>` : ''}
       <button class="btn primary" data-act="shopsave" data-id="${id}">সেভ</button>
@@ -1688,8 +1744,9 @@ function shopEditSheet(id) {
 // =========================================================== ৮. আইটেম ম্যানেজ
 async function viewItems() {
   shell(`<div class="spin"></div>`, { title: 'আইটেম', back: 'more' });
-  const items = await api('/api/items?all=1');
+  const [items, shops] = await Promise.all([api('/api/items?all=1'), api('/api/shops?all=1')]);
   S.items = items;
+  S.shops = shops;
   const cats = [...new Set(items.map((i) => i.category))];
   shell(`
     <button class="btn primary block" data-act="itemedit" data-id="0" style="margin-bottom:14px">+ নতুন আইটেম</button>
@@ -1702,7 +1759,8 @@ async function viewItems() {
             <div class="ava">${emojiFor(i.name)}</div>
             <div class="grow">
               <div class="nm">${esc(i.name)} ${i.available ? '' : '<span class="chip warn">আজ নেই</span>'} ${i.active ? '' : '<span class="chip">বন্ধ</span>'}</div>
-              <div class="sub">${tk(i.price)}${i.options.length ? ' · ' + i.options.map((o) => esc(o.name)).join(', ') : ''}</div>
+              <div class="sub">${esc(shopPriceText(i))}${
+                i.options.length ? ' · ' + i.options.map((o) => esc(o.name)).join(', ') : ''}</div>
             </div>
             <span class="go">›</span>
           </div>`).join('')}
@@ -1714,11 +1772,27 @@ function itemEditSheet(id) {
   sheet({
     title: id ? esc(it.name) : 'নতুন আইটেম',
     body: `
-      <div class="field"><label>নাম</label><input class="input" id="i_name" value="${esc(it.name)}" placeholder="যেমন: সিঙ্গারা" /></div>
       <div class="row2">
-        <div class="field"><label>দাম (৳)</label><input class="input" id="i_price" type="number" step="0.5" value="${it.price}" /></div>
+        <div class="field"><label>নাম</label><input class="input" id="i_name" value="${esc(it.name)}" placeholder="যেমন: সিঙ্গারা" /></div>
         <div class="field"><label>ক্যাটাগরি</label><input class="input" id="i_cat" value="${esc(it.category)}" /></div>
       </div>
+      <div class="section-title" style="margin-left:0">কোন দোকানে কত দাম</div>
+      <div class="card"><div class="card-b tight">
+        ${liveShops().map((s) => {
+          const p = it.shop_prices ? it.shop_prices[s.id] : null;
+          return `<div class="item ${p == null ? 'off' : ''}">
+            <div class="ava">🏪</div>
+            <div class="info"><div class="nm">${esc(s.name)}</div></div>
+            <input class="input shopprice" data-shop="${s.id}" type="number" step="0.5" min="0" inputmode="decimal"
+              style="width:104px;text-align:right;padding:9px 11px" value="${p != null ? p : ''}"
+              placeholder="নেই" title="দাম বসালে এই দোকানে পাওয়া যাবে" />
+          </div>`;
+        }).join('')}
+        ${liveShops().length === 0
+          ? `<div class="empty">আগে একটা দোকান যোগ করুন</div>` : ''}
+      </div></div>
+      <div class="hint" style="margin-bottom:12px">যে দোকানে দাম বসাবেন, শুধু ওই দোকানেই জিনিসটা দেখাবে।
+        ঘর খালি রাখলে ওই দোকানে নেই।</div>
       <div class="row2">
         <label class="check"><input type="checkbox" id="i_avail" ${it.available ? 'checked' : ''} /> আজ পাওয়া যাচ্ছে</label>
         <label class="check"><input type="checkbox" id="i_active" ${it.active ? 'checked' : ''} /> মেনুতে দেখাবে</label>
@@ -1769,7 +1843,8 @@ async function viewUsers() {
         </div>`).join('')}
       </div></div></section>`;
     }).join('')}
-    <p class="hint center">নতুন কেউ নিজে থেকেও রেজিস্ট্রেশন করতে পারবেন — অফিস PIN দিয়ে।</p>`,
+    <p class="hint center">এক নামে দুজন থাকতে পারেন — চেনার জন্য <b>PIN</b> আলাদা, দুজনের কখনো এক হবে না।<br>
+      নতুন কেউ নিজে থেকেও রেজিস্ট্রেশন করতে পারবেন (সেটিংস থেকে বন্ধ করা যায়)।</p>`,
     { title: 'ইউজার ও স্টাফ', back: 'more' });
   S.cache.users = users;
 }
@@ -1799,8 +1874,15 @@ function userEditSheet(id) {
       <div class="field"><label>${id ? 'নতুন পাসওয়ার্ড (বদলাতে চাইলে)' : 'পাসওয়ার্ড'}</label>
         <input class="input" id="u_pass" type="text" placeholder="${id ? 'খালি রাখলে বদলাবে না' : 'কমপক্ষে ৪ অক্ষর'}" /></div>
       ${id ? `<label class="check">
-        <input type="checkbox" id="u_active" ${u.active ? 'checked' : ''} /> অ্যাকাউন্ট চালু</label>` : ''}`,
-    footer: `<button class="btn primary block" data-act="usersave" data-id="${id}">সেভ</button>`,
+        <input type="checkbox" id="u_active" ${u.active ? 'checked' : ''} /> অ্যাকাউন্ট চালু</label>
+      <div class="hint" style="margin-top:-6px">টিক তুলে দিলে অ্যাকাউন্ট <b>বন্ধ</b> — উনি আর ঢুকতে পারবেন না,
+        কিন্তু তাঁর পুরোনো অর্ডার আর টাকার হিসাব সব থেকে যাবে। সাময়িকভাবে বন্ধ রাখতে এটাই ভালো।</div>` : ''}`,
+    footer: `<div class="btn-row">
+      ${id && id !== S.boot.user.id
+        ? `<button class="btn danger" data-act="userdel" data-id="${id}"
+            data-name="${esc(u.name)}">🗑️ মুছুন</button>` : ''}
+      <button class="btn primary" data-act="usersave" data-id="${id}">সেভ</button>
+    </div>`,
   });
 }
 
@@ -1899,8 +1981,9 @@ document.addEventListener('click', async (e) => {
                 <input class="input" id="ni_cat" list="catlist" value="${esc(cats[0] || 'নাস্তা')}" />
                 <datalist id="catlist">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
             </div>
-            <div class="hint">এই দামটা শুধু এই দোকানের জন্য বসবে। অন্য দোকানে আলাদা দাম হলে
-              সেখানে গিয়ে বসিয়ে দিন — না বসালে এই দামই সাধারণ দাম হিসেবে চলবে।</div>`,
+            <div class="hint">দামটা শুধু <b>${esc(shop?.name || 'এই দোকান')}</b>-এর জন্য বসবে।
+              অন্য দোকানেও জিনিসটা পাওয়া গেলে সেখানে গিয়ে আলাদা দাম বসিয়ে দিন —
+              না বসালে ওই দোকানে জিনিসটা দেখাবে না।</div>`,
           footer: `<button class="btn primary block" data-act="newitemsave" data-id="${id}">যোগ করুন</button>`,
           onOpen: () => setTimeout(() => $('#ni_name')?.focus(), 120),
         });
@@ -1911,13 +1994,13 @@ document.addEventListener('click', async (e) => {
         const price = Number($('#ni_price').value) || 0;
         if (!name) return toast('আইটেমের নাম দিন', 'err');
         if (price <= 0) return toast('দাম দিন', 'err');
-        const r = await api('/api/items', {
+        await api('/api/items', {
           method: 'POST',
-          body: { name, price, category: $('#ni_cat').value.trim() || 'নাস্তা' },
-        });
-        await api(`/api/shops/${id}/prices`, {
-          method: 'PUT',
-          body: { prices: [{ item_id: r.id, price, available: 1 }] },
+          body: {
+            name,
+            category: $('#ni_cat').value.trim() || 'নাস্তা',
+            shop_prices: [{ shop_id: id, price }],
+          },
         });
         toast(`✅ ${name} যোগ হলো · ${tk(price)}`, 'ok');
         closeSheet();
@@ -1933,12 +2016,10 @@ document.addEventListener('click', async (e) => {
           ? await api('/api/shops/' + id, { method: 'PUT', body })
           : await api('/api/shops', { method: 'POST', body });
         if (id) {
-          const miss = new Map([...document.querySelectorAll('.missinput')]
-            .map((m) => [Number(m.dataset.item), m.checked]));
+          // দাম বসানো = এই দোকানে আছে; ঘর খালি = নেই
           const prices = [...document.querySelectorAll('.priceinput')].map((p) => ({
             item_id: Number(p.dataset.item),
             price: p.value === '' ? null : Number(p.value),
-            available: miss.get(Number(p.dataset.item)) ? 0 : 1,
           }));
           await api(`/api/shops/${id}/prices`, { method: 'PUT', body: { prices } });
         }
@@ -1946,6 +2027,13 @@ document.addEventListener('click', async (e) => {
         if (!id && r.id) { await viewShops(); return shopEditSheet(r.id); }
         return viewShops();
       }
+      case 'shopclearall':
+        // এক চাপে সব ঘর খালি — তারপর যেগুলো এই দোকানে আছে সেগুলোই বসাবেন
+        document.querySelectorAll('.priceinput').forEach((p) => {
+          p.value = '';
+          p.closest('.item')?.classList.add('off');
+        });
+        return toast('সব ঘর খালি করা হলো — এখন যেগুলো আছে সেগুলোর দাম বসান', 'ok');
       case 'shopdel':
         if (!confirm('দোকানটা সরিয়ে দেব? (পুরোনো অর্ডারের হিসাব থাকবে)')) return;
         await api('/api/shops/' + id, { method: 'DELETE' });
@@ -2205,7 +2293,7 @@ document.addEventListener('click', async (e) => {
       case 'rmoptrow': return el.closest('.optrow').remove();
       case 'itemsave': {
         const body = {
-          name: $('#i_name').value, price: Number($('#i_price').value) || 0,
+          name: $('#i_name').value,
           category: $('#i_cat').value || 'নাস্তা',
           available: $('#i_avail').checked ? 1 : 0, active: $('#i_active').checked ? 1 : 0,
           options: [...document.querySelectorAll('.optrow')].map((r) => ({
@@ -2213,7 +2301,15 @@ document.addEventListener('click', async (e) => {
             price_delta: Number(r.querySelector('.o_d').value) || 0,
             is_default: r.querySelector('.o_def').checked ? 1 : 0,
           })).filter((o) => o.name.trim()),
+          // দাম দোকান ধরে — যে ঘর খালি, ওই দোকানে জিনিসটা নেই
+          shop_prices: [...document.querySelectorAll('.shopprice')].map((p) => ({
+            shop_id: Number(p.dataset.shop),
+            price: p.value === '' ? null : Number(p.value),
+          })),
         };
+        if (!body.name.trim()) return toast('আইটেমের নাম দিন', 'err');
+        if (!body.shop_prices.some((p) => p.price > 0))
+          return toast('অন্তত একটা দোকানে দাম বসান — নইলে কোথাও দেখাবে না', 'err');
         if (id) await api('/api/items/' + id, { method: 'PUT', body });
         else await api('/api/items', { method: 'POST', body });
         toast('✅ সেভ হয়েছে', 'ok'); closeSheet(); return viewItems();
@@ -2242,6 +2338,18 @@ document.addEventListener('click', async (e) => {
           await api('/api/users', { method: 'POST', body });
         }
         toast('✅ সেভ হয়েছে', 'ok'); closeSheet(); return viewUsers();
+      }
+      case 'userdel': {
+        const nm = el.dataset.name || 'ইউজার';
+        // মোছা মানে একেবারে মোছা — তাই দুবার জিজ্ঞেস করা হয়
+        if (!confirm(`${nm}-কে একেবারে মুছে ফেলবেন?\n\n` +
+          `তাঁর সব অর্ডার আর টাকার হিসাবও মুছে যাবে — পুরোনো রিপোর্টেও আর থাকবে না। ` +
+          `এটা আর ফেরানো যাবে না।\n\nশুধু ঢোকা বন্ধ করতে চাইলে "মুছুন" নয় — ` +
+          `"অ্যাকাউন্ট চালু"-র টিক তুলে দিন।`)) return;
+        if (!confirm(`শেষবার — ${nm} ও তাঁর সব হিসাব মুছে যাবে। নিশ্চিত?`)) return;
+        await api('/api/users/' + id, { method: 'DELETE' });
+        toast(`🗑️ ${nm} মুছে ফেলা হলো`, 'ok');
+        closeSheet(); return viewUsers();
       }
 
       // আরও

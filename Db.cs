@@ -45,8 +45,7 @@ CREATE TABLE dbo.users (
   created_at    NVARCHAR(20)   NOT NULL
 );
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_users_name' AND object_id = OBJECT_ID(N'dbo.users'))
-CREATE UNIQUE INDEX UX_users_name ON dbo.users(name);
+-- নাম ইউনিক নয় — এক নামে দুজন থাকতে পারে। চেনার আসল চাবি PIN (UX_users_pin)।
 
 IF OBJECT_ID(N'dbo.sessions', N'U') IS NULL
 CREATE TABLE dbo.sessions (
@@ -204,6 +203,29 @@ CREATE INDEX IX_ledger_user ON dbo.ledger(user_id);
         // ইউজার যেন বুঝতে পারে তার অর্ডার আসলে গৃহীত হয়েছে কি না
         "IF COL_LENGTH('dbo.orders', 'accepted_at') IS NULL ALTER TABLE dbo.orders ADD accepted_at NVARCHAR(20) NULL;",
         "IF COL_LENGTH('dbo.orders', 'accepted_by') IS NULL ALTER TABLE dbo.orders ADD accepted_by INT NULL;",
+
+        // ---- দাম এখন শুধুই দোকান ধরে; "সাধারণ দাম" নামের কিছু আর নেই ----
+        // আগে item_prices-এ সারি না থাকলে items.price ধরা হতো, ফলে নতুন দোকান খুললেই
+        // সব আইটেম ওখানে দেখাত। এখন নিয়ম একটাই: সারি আছে = ওই দোকানে পাওয়া যায়।
+        // তাই পুরোনো দোকানগুলোর চলতি মেনুটা আগে সারিতে বসিয়ে দিতে হবে, নইলে
+        // লাইভে ওদের মেনু খালি হয়ে যাবে।
+        @"IF NOT EXISTS (SELECT 1 FROM dbo.settings WHERE [key] = 'prices_per_shop_done')
+          BEGIN
+            INSERT INTO dbo.item_prices(item_id, shop_id, price, available)
+            SELECT i.id, s.id, i.price, 1
+              FROM dbo.items i CROSS JOIN dbo.shops s
+             WHERE i.price > 0
+               AND NOT EXISTS (SELECT 1 FROM dbo.item_prices p
+                                WHERE p.item_id = i.id AND p.shop_id = s.id);
+            INSERT INTO dbo.settings([key], value) VALUES('prices_per_shop_done', '1');
+          END",
+        // "এখানে নেই" বলা সারিগুলোর আর দরকার নেই — সারি না থাকলেই মানে "নেই"
+        "DELETE FROM dbo.item_prices WHERE available = 0;",
+
+        // ---- এক নামে দুজন থাকতে পারে, কিন্তু PIN আলাদাই থাকবে ----
+        // অফিসে একই নামের দুজন থাকা স্বাভাবিক (দুই "রাহাত")। চেনার জন্য PIN আছে।
+        @"IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_users_name' AND object_id = OBJECT_ID(N'dbo.users'))
+          DROP INDEX UX_users_name ON dbo.users;",
 
         // ---- জিনিসটা পাওয়া গেল না, বদলে অন্য কিছু আনা হলো ----
         // "না পেলে যেকোনো কিছু" বলা থাকলে স্টাফ তার নামে বদলি জিনিসটা বসিয়ে দেন।

@@ -204,20 +204,20 @@ List<Dictionary<string, object?>> LoadItems(bool onlyActive)
     {
         var id = (int)it["id"]!;
         it["options"] = opts.Where(o => (int)o["item_id"]! == id).ToList();
-        var mine = prices.Where(p => (int)p["item_id"]! == id).ToList();
-        // { "3": 18.00 } — দোকান-আইডি ধরে দাম; না থাকলে items.price
-        it["shop_prices"] = mine.Where(p => (bool)p["available"]!)
+        // { "3": 18.00 } — দোকান-আইডি ধরে দাম। এই তালিকায় যে দোকান নেই,
+        // ওই দোকানে জিনিসটা পাওয়াই যায় না। সাধারণ দাম বলে কিছু নেই।
+        it["shop_prices"] = prices
+            .Where(p => (int)p["item_id"]! == id && (decimal)p["price"]! > 0)
             .ToDictionary(p => p["shop_id"]!.ToString()!, p => (decimal)p["price"]!);
-        // যে দোকানগুলোয় জিনিসটা পাওয়াই যায় না
-        it["shop_missing"] = mine.Where(p => !(bool)p["available"]!)
-            .Select(p => (int)p["shop_id"]!).ToList();
     }
     return items;
 }
 
-/// <summary>এই দোকানে জিনিসটা পাওয়া যায় কি না।</summary>
+/// <summary>এই দোকানে জিনিসটা পাওয়া যায় কি না — দাম বসানো থাকলেই পাওয়া যায়।</summary>
 bool SoldAt(Dictionary<string, object?> item, int? shopId) =>
-    shopId is not int sid || item["shop_missing"] is not List<int> miss || !miss.Contains(sid);
+    shopId is int sid &&
+    item["shop_prices"] is Dictionary<string, decimal> sp &&
+    sp.ContainsKey(sid.ToString());
 
 List<Dictionary<string, object?>> LoadShops(bool onlyActive = true)
 {
@@ -226,13 +226,13 @@ List<Dictionary<string, object?>> LoadShops(bool onlyActive = true)
         $"SELECT * FROM dbo.shops {(onlyActive ? "WHERE active = 1" : "")} ORDER BY sort_order, id"));
 }
 
-/// <summary>এই দোকানে এই জিনিসের দাম; দোকানের আলাদা দাম না থাকলে সাধারণ দাম।</summary>
+/// <summary>এই দোকানে এই জিনিসের দাম। দোকানে দাম বসানো না থাকলে জিনিসটা ওখানে নেই।</summary>
 decimal PriceOf(Dictionary<string, object?> item, int? shopId)
 {
     if (shopId is int sid &&
         item["shop_prices"] is Dictionary<string, decimal> sp &&
         sp.TryGetValue(sid.ToString(), out var p)) return p;
-    return (decimal)item["price"]!;
+    return 0m;
 }
 
 // =============================================================== পাবলিক
@@ -284,9 +284,7 @@ app.MapPost("/api/register", (HttpContext ctx, RegisterReq b) =>
         return Fail(400, "আপনি কোন তলায় বসেন সেটা বেছে নিন");
 
     using var c = Db.Open();
-    if (c.ExecuteScalar<int>("SELECT COUNT(*) FROM dbo.users WHERE name = @n", new { n = name }) > 0)
-        return Fail(400, "এই নামে একজন আছেন — অন্য নাম দিন");
-
+    // এক নামে দুজন থাকতে পারে (অফিসে দুই "রাহাত" থাকা স্বাভাবিক) — PIN-ই আলাদা রাখতে হয়
     var id = c.ExecuteScalar<int>(
         @"INSERT INTO dbo.users(name, pin, floor, password_hash, role, created_at)
           VALUES(@n, @pin, @f, @p, 'user', @t); SELECT CAST(SCOPE_IDENTITY() AS INT);",
@@ -298,9 +296,12 @@ app.MapPost("/api/register", (HttpContext ctx, RegisterReq b) =>
 app.MapPost("/api/login", (HttpContext ctx, LoginReq b) =>
 {
     using var c = Db.Open();
-    // PIN দিয়ে, অথবা নাম দিয়েও (অ্যাডমিন "admin" দিয়ে ঢোকেন)
+    // PIN দিয়ে, অথবা নাম দিয়েও (অ্যাডমিন "admin" দিয়ে ঢোকেন)।
+    // এক নামে দুজন থাকতে পারে, তাই PIN-এর মিলটাই আগে ধরা হয় — PIN কখনো দুজনের এক নয়।
     var who = (b.pin ?? "").Trim();
-    var u = c.QueryFirstOrDefault("SELECT * FROM dbo.users WHERE pin = @p OR name = @p", new { p = who });
+    var u = c.QueryFirstOrDefault(
+        @"SELECT TOP 1 * FROM dbo.users WHERE pin = @p OR name = @p
+           ORDER BY CASE WHEN pin = @p THEN 0 ELSE 1 END, id", new { p = who });
     if (u is null || !BCrypt.Net.BCrypt.Verify(b.password ?? "", (string)u.password_hash))
         return Fail(400, "PIN বা পাসওয়ার্ড ভুল");
     if (!(bool)u.active) return Fail(403, "আপনার অ্যাকাউন্ট বন্ধ আছে");
@@ -418,7 +419,10 @@ app.MapDelete("/api/shops/{id:int}", (HttpContext ctx, int id) =>
     return Results.Json(new { ok = true });
 });
 
-/// <summary>এক দোকানের সব দাম একসাথে সেভ — দাম খালি দিলে সাধারণ দামই চলবে।</summary>
+/// <summary>
+/// এক দোকানের সব দাম একসাথে সেভ।
+/// দাম বসানো = এই দোকানে জিনিসটা পাওয়া যায়; ঘর খালি = এই দোকানে নেই।
+/// </summary>
 app.MapPut("/api/shops/{id:int}/prices", (HttpContext ctx, int id, ShopPricesReq b) =>
 {
     var (_, err) = Auth(ctx, "staff"); if (err is not null) return err;
@@ -429,24 +433,49 @@ app.MapPut("/api/shops/{id:int}/prices", (HttpContext ctx, int id, ShopPricesReq
     foreach (var p in b.prices ?? new List<ShopPriceDto>())
     {
         if (p.item_id is not int itemId) continue;
-        var missing = (p.available ?? 1) == 0;
         var price = p.price is decimal v && v > 0 ? M(v) : (decimal?)null;
 
-        // দাম-ও নেই, "নেই"-ও বলা হয়নি → সাধারণ দামই চলবে, তাই সারিটাই দরকার নেই
-        if (!missing && price is null)
+        // ঘর খালি → এই দোকানে জিনিসটা নেই, তাই সারিটাই থাকবে না
+        if (price is null)
         {
             c.Execute("DELETE FROM dbo.item_prices WHERE item_id = @i AND shop_id = @s",
                 new { i = itemId, s = id });
             continue;
         }
         c.Execute(
-            @"UPDATE dbo.item_prices SET price = @p, available = @a WHERE item_id = @i AND shop_id = @s;
+            @"UPDATE dbo.item_prices SET price = @p, available = 1 WHERE item_id = @i AND shop_id = @s;
               IF @@ROWCOUNT = 0
-              INSERT INTO dbo.item_prices(item_id, shop_id, price, available) VALUES(@i, @s, @p, @a);",
-            new { i = itemId, s = id, p = price ?? 0m, a = !missing });
+              INSERT INTO dbo.item_prices(item_id, shop_id, price, available) VALUES(@i, @s, @p, 1);",
+            new { i = itemId, s = id, p = price.Value });
     }
     return Results.Json(new { ok = true });
 });
+
+/// <summary>
+/// আইটেম পাতা থেকে দোকান ধরে দাম সেভ।
+/// দাম বসানো = ওই দোকানে পাওয়া যায়; ঘর খালি বা ০ = ওই দোকানে নেই।
+/// </summary>
+void SaveItemShopPrices(int itemId, List<ItemShopPriceDto>? rows)
+{
+    if (rows is null) return;
+    using var c = Db.Open();
+    foreach (var r in rows)
+    {
+        if (r.shop_id is not int sid) continue;
+        var price = r.price is decimal v && v > 0 ? M(v) : (decimal?)null;
+        if (price is null)
+        {
+            c.Execute("DELETE FROM dbo.item_prices WHERE item_id = @i AND shop_id = @s",
+                new { i = itemId, s = sid });
+            continue;
+        }
+        c.Execute(
+            @"UPDATE dbo.item_prices SET price = @p, available = 1 WHERE item_id = @i AND shop_id = @s;
+              IF @@ROWCOUNT = 0
+              INSERT INTO dbo.item_prices(item_id, shop_id, price, available) VALUES(@i, @s, @p, 1);",
+            new { i = itemId, s = sid, p = price.Value });
+    }
+}
 
 void SaveOptions(int itemId, List<OptionDto>? options)
 {
@@ -475,6 +504,7 @@ app.MapPost("/api/items", (HttpContext ctx, ItemReq b) =>
           VALUES(@n, @p, @c, @s); SELECT CAST(SCOPE_IDENTITY() AS INT);",
         new { n = b.name.Trim(), p = M(b.price ?? 0), c = (b.category ?? "নাস্তা").Trim(), s = b.sort_order ?? 100 });
     SaveOptions(id, b.options);
+    SaveItemShopPrices(id, b.shop_prices);
     return Results.Json(new { ok = true, id });
 });
 
@@ -497,6 +527,7 @@ app.MapPut("/api/items/{id:int}", (HttpContext ctx, int id, ItemReq b) =>
             i = id,
         });
     SaveOptions(id, b.options);
+    SaveItemShopPrices(id, b.shop_prices);
     return Results.Json(new { ok = true });
 });
 
@@ -857,7 +888,7 @@ app.MapPatch("/api/order-lines/{id:int}/substitute", (HttpContext ctx, int id, S
         var it = c.QueryFirstOrDefault(
             @"SELECT i.name,
                      ISNULL((SELECT ip.price FROM dbo.item_prices ip
-                              WHERE ip.item_id = i.id AND ip.shop_id = @s AND ip.available = 1), i.price) AS price
+                              WHERE ip.item_id = i.id AND ip.shop_id = @s), 0) AS price
                 FROM dbo.items i WHERE i.id = @i",
             new { i = subId, s = (int?)ln.shop_id });
         if (it is null) return Fail(400, "আইটেমটা নেই");
@@ -1459,8 +1490,7 @@ app.MapPost("/api/users", (HttpContext ctx, UserReq b) =>
     if (pass.Length < 4) return Fail(400, "পাসওয়ার্ড কমপক্ষে ৪ অক্ষর");
     var pinErr = BadPin(pin); if (pinErr is not null) return pinErr;
     using var c = Db.Open();
-    if (c.ExecuteScalar<int>("SELECT COUNT(*) FROM dbo.users WHERE name = @n", new { n = name }) > 0)
-        return Fail(400, "এই নামে একজন আছেন");
+    // নাম মিলে গেলেও সমস্যা নেই — PIN আলাদা হলেই হলো
     var floor = role == "super_admin" ? null : b.floor;
     if (role != "super_admin" && (floor is not int ff || !Floors().Contains(ff)))
         return Fail(400, "কোন তলার লোক সেটা বেছে দিন");
@@ -1482,9 +1512,8 @@ app.MapPatch("/api/users/{id:int}", (HttpContext ctx, int id, UserReq b) =>
     if (b.name is not null)
     {
         var name = b.name.Trim();
-        if (c.ExecuteScalar<int>("SELECT COUNT(*) FROM dbo.users WHERE name = @n AND id <> @i",
-                new { n = name, i = id }) > 0)
-            return Fail(400, "এই নামে একজন আছেন");
+        if (name.Length < 2) return Fail(400, "নাম কমপক্ষে ২ অক্ষর");
+        // এক নামে দুজন থাকতে পারে — তাই নাম মিলিয়ে দেখার দরকার নেই
         c.Execute("UPDATE dbo.users SET name = @n WHERE id = @i", new { n = name, i = id });
     }
     if (!string.IsNullOrWhiteSpace(b.pin))
@@ -1521,13 +1550,34 @@ app.MapPatch("/api/users/{id:int}", (HttpContext ctx, int id, UserReq b) =>
     return Results.Json(new { ok = true });
 });
 
+/// <summary>
+/// ইউজার একেবারে মুছে ফেলা — তার অর্ডার, লাইন আর টাকার হিসাবসহ।
+/// অ্যাকাউন্ট শুধু বন্ধ রাখতে চাইলে মোছার দরকার নেই, PATCH দিয়ে active = 0 করুন
+/// (তখন পুরোনো রিপোর্টে তার হিসাব থেকে যায়)।
+/// </summary>
 app.MapDelete("/api/users/{id:int}", (HttpContext ctx, int id) =>
 {
     var (me, err) = Auth(ctx, "admin"); if (err is not null) return err;
     if (id == me!.id) return Fail(400, "নিজেকে মোছা যাবে না");
     using var c = Db.Open();
-    c.Execute("UPDATE dbo.users SET active = 0 WHERE id = @i", new { i = id });
+    var u = c.QueryFirstOrDefault("SELECT role FROM dbo.users WHERE id = @i", new { i = id });
+    if (u is null) return Fail(404, "ইউজার নেই");
+    // শেষ সুপার অ্যাডমিনকে মুছে ফেললে আর কেউ ঢুকতেই পারবে না
+    if ((string)u.role == "super_admin" &&
+        c.ExecuteScalar<int>("SELECT COUNT(*) FROM dbo.users WHERE role = 'super_admin' AND id <> @i",
+            new { i = id }) == 0)
+        return Fail(400, "অন্তত একজন সুপার অ্যাডমিন থাকতে হবে");
+
     c.Execute("DELETE FROM dbo.sessions WHERE user_id = @i", new { i = id });
+    c.Execute("DELETE FROM dbo.ledger WHERE user_id = @i", new { i = id });
+    c.Execute(
+        @"DELETE FROM dbo.order_lines
+           WHERE order_id IN (SELECT id FROM dbo.orders WHERE user_id = @i);", new { i = id });
+    c.Execute("DELETE FROM dbo.orders WHERE user_id = @i", new { i = id });
+    c.Execute("UPDATE dbo.day_status SET updated_by = NULL WHERE updated_by = @i", new { i = id });
+    c.Execute("UPDATE dbo.ledger SET created_by = NULL WHERE created_by = @i", new { i = id });
+    c.Execute("UPDATE dbo.orders SET accepted_by = NULL WHERE accepted_by = @i", new { i = id });
+    c.Execute("DELETE FROM dbo.users WHERE id = @i", new { i = id });
     return Results.Json(new { ok = true });
 });
 
@@ -1571,7 +1621,9 @@ record LoginReq(string? pin, string? password);
 record PwdReq(string? old_password, string? new_password);
 record OptionDto(string? name, decimal? price_delta, int? is_default);
 record ItemReq(string? name, decimal? price, string? category, int? sort_order, int? active, int? available,
-    List<OptionDto>? options);
+    List<OptionDto>? options, List<ItemShopPriceDto>? shop_prices);
+/// <summary>আইটেম পাতা থেকে দোকান ধরে দাম — দাম খালি/০ মানে ওই দোকানে জিনিসটা নেই।</summary>
+record ItemShopPriceDto(int? shop_id, decimal? price);
 record AvailReq(int? available);
 record LineDto(int? item_id, int? option_id, int? qty, string? fallback_type, int? fallback_item_id,
     string? fallback_note);
