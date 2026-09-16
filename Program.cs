@@ -162,11 +162,18 @@ Dictionary<string, object?>? DayStatus(string date, int? floor)
     return d;
 }
 
-/// <summary>ইউজার এখন অর্ডার বদলাতে পারবে কি না। সময়ের কোনো সীমা নেই।</summary>
+/// <summary>
+/// ইউজার এখন অর্ডার বদলাতে পারবে কি না। সময়ের কোনো সীমা নেই।
+/// <para>
+/// একবার অর্ডার দিয়ে দিলে ইউজার নিজে আর সেটা বদলাতে বা বাতিল করতে পারেন না —
+/// স্টাফ ওই তালিকা ধরেই বাজারে যান, তাই পরে বদলে গেলে হিসাব মেলে না।
+/// কিছু বদলাতে হলে স্টাফকে বলতে হবে; স্টাফ/অ্যাডমিন সবসময়ই বদলাতে পারেন।
+/// </para>
+/// </summary>
 bool OrderLocked(dynamic? order, Me me, string date)
 {
     if (me.role != "user") return false;
-    if (order is not null && (string)order.status != "pending") return true;
+    if (order is not null) return true;
     var st = DayStatus(date, me.floor);
     return st is not null && !(bool)st["canOrder"]!;
 }
@@ -179,6 +186,9 @@ string LockReason(string date, int? floor, dynamic? order = null)
         if (s == "purchased") return "🛍️ আপনার নাস্তা কেনা হয়ে গেছে — আর বদলানো যাবে না";
         if (s == "delivered") return "✅ নাস্তা বুঝিয়ে দেওয়া হয়েছে — আর বদলানো যাবে না";
         if (s == "cancelled") return "🚫 এই অর্ডারটি বাতিল করা হয়েছে — স্টাফকে বলুন";
+        // জমা হয়ে গেছে, কিন্তু স্টাফ এখনো কিছু করেননি
+        return "🔒 আপনার অর্ডার জমা হয়ে গেছে — নিজে আর বদলানো বা বাতিল করা যাবে না। "
+             + "কিছু বদলাতে হলে আপনার তলার স্টাফকে বলুন।";
     }
     var st = DayStatus(date, floor);
     if (st is not null && !(bool)st["canOrder"]!) return $"{st["icon"]} {st["label"]}";

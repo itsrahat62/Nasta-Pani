@@ -569,13 +569,14 @@ function paintOrder() {
     ${count > 0 || !locked ? `
     <div class="totalbar">
       <div class="t"><b>${tk(total)}</b><small>${bn(count)} টি আইটেম</small></div>
-      ${locked ? `<span class="chip">লক করা</span>` :
+      ${locked ? `<span class="chip">${S.orderMeta.order ? '🔒 জমা হয়েছে' : 'লক করা'}</span>` :
         `<button class="btn primary" data-act="save" ${S.dirty ? '' : 'disabled'}>${S.dirty ? 'সেভ করুন' : 'সেভ করা আছে ✓'}</button>`}
     </div>` : ''}
     ${S.orderFor && S.boot.money_module ? `<button class="btn block" data-act="takecash"
       data-id="${S.orderFor.id}" data-name="${esc(S.orderFor.name)}" style="margin-top:10px">
       💵 হাতে টাকা দিলেন? লিখে রাখুন</button>` : ''}
-    ${count > 0 && !locked ? `<button class="btn block" data-act="usualsave" style="margin-top:10px">⭐ ${S.orderFor ? `${esc(S.orderFor.name)}-এর রোজকার অর্ডার করে রাখুন` : 'এটাই আমার রোজকার অর্ডার করে রাখুন'}</button>` : ''}
+    <!-- রোজকার অর্ডার সেভ করা আজকের অর্ডার ছোঁয় না, তাই লক থাকলেও এটা চলবে -->
+    ${count > 0 ? `<button class="btn block" data-act="usualsave" style="margin-top:10px">⭐ ${S.orderFor ? `${esc(S.orderFor.name)}-এর রোজকার অর্ডার করে রাখুন` : 'এটাই আমার রোজকার অর্ডার করে রাখুন'}</button>` : ''}
     ${S.orderMeta.order && !locked ? `<button class="btn danger block" data-act="delorder" style="margin-top:10px">আজকের অর্ডার বাতিল করুন</button>` : ''}
     ${S.orderFor ? `<button class="btn block" data-act="orderforclear" style="margin-top:10px">← আজকের তালিকায় ফিরুন</button>` : ''}
   `, {
