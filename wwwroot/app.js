@@ -286,7 +286,7 @@ function renderAuth() {
         <div class="field">
           <label>${t === 'reg' ? 'আপনার PIN' : 'PIN'}</label>
           <input class="input" name="pin" ${t === 'reg' ? 'inputmode="numeric" pattern="[0-9]*" maxlength="6"' : ''}
-            autocomplete="username" placeholder="${t === 'reg' ? '৪–৬ সংখ্যার নিজের একটা PIN' : 'যেমন: 4800'}" required />
+            autocomplete="username" placeholder="${t === 'reg' ? '১–৬ সংখ্যার নিজের একটা PIN' : 'যেমন: 4800'}" required />
           ${t === 'reg' ? `<div class="hint">এই PIN শুধু আপনার — এটা আর পাসওয়ার্ড দিয়েই পরে ঢুকবেন। আরেকজনের PIN-এর সাথে মিলতে পারবে না।</div>` : ''}
         </div>
         ${t === 'reg' ? `
@@ -1868,7 +1868,7 @@ function userEditSheet(id) {
       <div class="row2">
         <div class="field"><label>PIN</label>
           <input class="input" id="u_pin" inputmode="numeric" maxlength="6" value="${esc(u.pin || '')}"
-            placeholder="৪–৬ সংখ্যা" /></div>
+            placeholder="১–৬ সংখ্যা" /></div>
         <div class="field"><label>তলা</label>
           <select class="input" id="u_floor">
             ${(S.boot.floors || []).map((f) => `<option value="${f}" ${u.floor === f ? 'selected' : ''}>${bn(f)}য় তলা</option>`).join('')}

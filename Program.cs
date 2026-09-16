@@ -255,11 +255,11 @@ app.MapGet("/api/bootstrap", (HttpContext ctx) =>
     });
 });
 
-/// <summary>PIN যাচাই — ৪–৬ সংখ্যা, আর কারো সাথে মিলতে পারবে না।</summary>
+/// <summary>PIN যাচাই — ১–৬ সংখ্যা, আর কারো সাথে মিলতে পারবে না।</summary>
 IResult? BadPin(string pin, int? exceptUserId = null)
 {
-    if (!System.Text.RegularExpressions.Regex.IsMatch(pin, @"^\d{4,6}$"))
-        return Fail(400, "PIN হবে ৪ থেকে ৬ সংখ্যার (শুধু নম্বর)");
+    if (!System.Text.RegularExpressions.Regex.IsMatch(pin, @"^\d{1,6}$"))
+        return Fail(400, "PIN হবে ১ থেকে ৬ সংখ্যার (শুধু নম্বর)");
     using var c = Db.Open();
     var taken = c.ExecuteScalar<int>(
         "SELECT COUNT(*) FROM dbo.users WHERE pin = @p AND (@i IS NULL OR id <> @i)",
