@@ -204,6 +204,14 @@ CREATE INDEX IX_ledger_user ON dbo.ledger(user_id);
         "IF COL_LENGTH('dbo.orders', 'accepted_at') IS NULL ALTER TABLE dbo.orders ADD accepted_at NVARCHAR(20) NULL;",
         "IF COL_LENGTH('dbo.orders', 'accepted_by') IS NULL ALTER TABLE dbo.orders ADD accepted_by INT NULL;",
 
+        // ---- অর্ডার আর কখনো মুছে ফেলা হয় না — "বাতিল" শুধু একটা অবস্থা ----
+        // আগে বাতিল করলে বা সেভের সময় সব লাইন বাদ পড়লে অর্ডারটা টাকার হিসাবসহ
+        // ডেটাবেজ থেকেই মুছে যেত, তাই লোকে পুরোনো অর্ডার আর দেখতে পেত না।
+        "IF COL_LENGTH('dbo.orders', 'cancelled_at') IS NULL ALTER TABLE dbo.orders ADD cancelled_at NVARCHAR(20) NULL;",
+        "IF COL_LENGTH('dbo.orders', 'cancelled_by') IS NULL ALTER TABLE dbo.orders ADD cancelled_by INT NULL;",
+        @"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_orders_user' AND object_id = OBJECT_ID(N'dbo.orders'))
+          CREATE INDEX IX_orders_user ON dbo.orders(user_id, order_date);",
+
         // ---- দাম এখন শুধুই দোকান ধরে; "সাধারণ দাম" নামের কিছু আর নেই ----
         // আগে item_prices-এ সারি না থাকলে items.price ধরা হতো, ফলে নতুন দোকান খুললেই
         // সব আইটেম ওখানে দেখাত। এখন নিয়ম একটাই: সারি আছে = ওই দোকানে পাওয়া যায়।

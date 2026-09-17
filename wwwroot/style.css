@@ -628,29 +628,53 @@ textarea.input { min-height: 52px; }
 .item.gone { background: var(--info-soft); }
 .item.gone .pr { color: var(--info); font-weight: 600; }
 
-/* -------------------------------- ড্যাশবোর্ডের রোজকার হিসাবের সারি (ইউজার) */
-.dayrow {
+/* ------------------------------------------------ টাকার খাতা (পাসবই) */
+/* কী হলো | কত টাকা | জের — জমা দেওয়া টাকা সারি ধরে কীভাবে কমছে এক নজরে */
+.pbrow {
   display: grid;
-  grid-template-columns: 1.45fr .9fr .9fr .95fr;
-  gap: 6px; align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto 86px;
+  gap: 4px 10px; align-items: center;
   padding: 9px 12px;
   border-bottom: 1px solid var(--line-soft);
+  position: relative;
 }
-.dayrow:last-child { border-bottom: 0; }
-.dayrow.head {
+.pbrow:last-child { border-bottom: 0; }
+.pbrow.head {
   padding: 7px 12px; background: var(--card-2);
   font-size: 11px; font-weight: 700; color: var(--muted);
   border-bottom: 1px solid var(--line);
 }
-.dayrow.head .dr-m { text-align: right; }
-.dr-d b { display: block; font-weight: 700; font-size: 14px; }
-.dr-d small { display: block; font-size: 10.5px; color: var(--muted); line-height: 1.4; }
-.dr-m { text-align: right; min-width: 0; }
-.dr-m span { display: block; font-family: var(--f-num); font-weight: 700; font-size: 14px; }
-.dr-m small { display: block; font-size: 10px; color: var(--muted); }
-.dr-m .pos  { color: var(--ok); }
-.dr-m .neg  { color: var(--warn); }
-.dr-m .zero { color: var(--muted); font-weight: 600; }
+.pbrow.edge { background: var(--card-2); }
+.pbrow.edge .pb-what b { font-size: 13px; color: var(--ink-2); }
+.pbrow.pending { background: color-mix(in srgb, var(--warn-soft) 55%, transparent); }
+.pb-what { min-width: 0; }
+.pb-what b { display: block; font-weight: 700; font-size: 14px; }
+.pb-what small { display: block; font-size: 11px; color: var(--muted); line-height: 1.4; }
+.pb-amt, .pb-bal { text-align: right; font-family: var(--f-num); font-weight: 700; font-size: 14px; white-space: nowrap; }
+.pb-amt.pos { color: var(--ok); }
+.pb-amt.neg { color: var(--warn); }
+.pb-bal { color: var(--ink); }
+.pb-bal.neg { color: var(--warn); }
+.pbrow.head .pb-amt, .pbrow.head .pb-bal { font-family: inherit; font-size: 11px; color: var(--muted); }
+/* স্টাফের খাতায় জমা/ফেরত মোছার ছোট বোতাম — সারির ডানে ভাসে, কলাম নষ্ট করে না */
+.pb-del { position: absolute; right: 4px; top: 4px; padding: 1px 6px !important; font-size: 10px !important; opacity: .55; }
+.pb-del:hover { opacity: 1; }
+
+/* বাতিল অর্ডার — ইতিহাসে থাকে, কিন্তু ফিকে */
+.card.cancelled { opacity: .62; }
+.card.cancelled .amt { text-decoration: line-through; }
+
+/* ----------------------------------------------------- সময় বাছাই */
+.period .card-b { padding: 10px 11px; }
+.period-row { display: flex; gap: 6px; align-items: center; }
+.period-row .grow { flex: 1; }
+.period-since {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  font-size: 12.5px; font-weight: 700; color: var(--ink-2);
+}
+.period-since span { white-space: nowrap; }
+.period-since .input { flex: 1; min-width: 0; padding: 7px 9px; font-size: 13.5px; }
+.period-since.on .input { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
 
 .buy-row { padding: 10px 12px; gap: 11px; margin-bottom: 7px; border-radius: 14px; }
 .buy-qty { min-width: 44px; height: 44px; border-radius: 14px; font-size: 19px; }
@@ -809,9 +833,9 @@ table.tbl th, table.tbl td { padding: 7px 6px; }
   .item .nm, .list-row .nm { font-size: 15px; }
   .btn { padding: 10px 15px; font-size: 14.5px; }
   .btn-row.nowrap .btn { font-size: 13.5px; padding: 9px 12px; }
-  .dayrow { grid-template-columns: 2fr .9fr .9fr .95fr; padding: 11px 15px; }
-  .dr-d b { font-size: 15px; }
-  .dr-m span { font-size: 15px; }
+  .pbrow { grid-template-columns: minmax(0, 1fr) 120px 120px; padding: 11px 16px; }
+  .pb-amt, .pb-bal { font-size: 15px; }
+  .pb-what b { font-size: 15px; }
 
   /* মেনুটা দুই কলাম — চওড়া ফাঁকা জায়গা থাকে না, স্ক্রলও অর্ধেক হয়ে যায় */
   .menu-grid {

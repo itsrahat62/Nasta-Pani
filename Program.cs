@@ -1,3 +1,4 @@
+using System.Data;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -173,7 +174,8 @@ Dictionary<string, object?>? DayStatus(string date, int? floor)
 bool OrderLocked(dynamic? order, Me me, string date)
 {
     if (me.role != "user") return false;
-    if (order is not null) return true;
+    // বাতিল হওয়া অর্ডার মানে আজ আর কোনো অর্ডার নেই — আবার নতুন করে দেওয়া যায়
+    if (order is not null && (string)order.status != "cancelled") return true;
     var st = DayStatus(date, me.floor);
     return st is not null && !(bool)st["canOrder"]!;
 }
@@ -624,8 +626,12 @@ app.MapGet("/api/orders/my", (HttpContext ctx, string? date, int? user_id) =>
         target = new Me((int)tu.id, (string)tu.name, (string)tu.role, (string?)tu.pin ?? "", (int?)tu.floor);
     }
 
-    var o = c.QueryFirstOrDefault("SELECT * FROM dbo.orders WHERE user_id = @u AND order_date = @d",
+    var row = c.QueryFirstOrDefault("SELECT * FROM dbo.orders WHERE user_id = @u AND order_date = @d",
         new { u = target.id, d });
+    // বাতিল হওয়া অর্ডার আজকের অর্ডার নয় — পাতা খালি থাকে, নতুন করে দেওয়া যায়।
+    // তবে কেউ যেন অবাক না হন, তাই বাতিলের খবরটা আলাদা করে পাঠানো হয়।
+    var cancelled = row is not null && (string)row.status == "cancelled";
+    var o = cancelled ? null : row;
     var prof = c.QueryFirstOrDefault("SELECT default_shop_id, usual_json FROM dbo.users WHERE id = @i",
         new { i = target.id });
 
@@ -643,6 +649,9 @@ app.MapGet("/api/orders/my", (HttpContext ctx, string? date, int? user_id) =>
         lock_reason = LockReason(d, target.floor, o),
         late_note = LateNote(d, target.floor),
         order = Hydrate(o),
+        cancelled_order = cancelled
+            ? new { id = (int)row!.id, total = (decimal)row.total, cancelled_at = (string?)row.cancelled_at }
+            : null,
         accepted_by_name = acceptedBy,
         for_user = target.id == actor.id ? null : new { target.id, target.name, target.floor },
         default_shop_id = (int?)prof?.default_shop_id,
@@ -687,15 +696,62 @@ int UsualTarget(Me me, int? userId, out IResult? error)
     return uid;
 }
 
-app.MapGet("/api/orders/history", (HttpContext ctx) =>
+/// <summary>
+/// অর্ডারের ইতিহাস — কোনো সীমা নেই (আগে শুধু শেষ ৬০টা দেখাত)।
+/// from/to দিলে ওই সময়টুকু (মাস ধরে বা "অমুক তারিখ থেকে আজ পর্যন্ত")।
+/// বাতিল অর্ডারও আসে, "বাতিল" লেখা থাকে — কিছুই হারিয়ে যায় না।
+/// ইউজার নিজেরটা দেখেন; স্টাফ user_id দিয়ে নিজের তলার কারো।
+/// </summary>
+app.MapGet("/api/orders/history", (HttpContext ctx, int? user_id, string? from, string? to) =>
 {
     var (me, err) = Auth(ctx); if (err is not null) return err;
+    var uid = me!.id;
+    if (user_id is int u && u != me.id)
+    {
+        if (me.role == "user") return Fail(403, "এটা আপনার অর্ডার না");
+        var fErr = NotMyFloor(me, u); if (fErr is not null) return fErr;
+        uid = u;
+    }
+    var f = IsDate(from) ? from : null;
+    var t = IsDate(to) ? to : null;
     using var c = Db.Open();
-    var rows = c.Query(
-        @"SELECT TOP 60 id, order_date, status, total, accepted_at FROM dbo.orders
-           WHERE user_id = @u ORDER BY order_date DESC", new { u = me!.id });
-    return Results.Json(rows.Select(r => Hydrate(r)).ToList());
+    var orders = DL(c.Query(
+        @"SELECT id, order_date, status, total, shop_name, note, accepted_at, cancelled_at, created_at
+            FROM dbo.orders
+           WHERE user_id = @u AND (@f IS NULL OR order_date >= @f) AND (@t IS NULL OR order_date <= @t)
+           ORDER BY order_date DESC", new { u = uid, f, t }));
+    HydrateMany(c, orders);
+
+    var live = orders.Where(o => (string)o["status"]! != "cancelled").ToList();
+    return Results.Json(new
+    {
+        from = f,
+        to = t,
+        orders,
+        summary = new
+        {
+            days = live.Count,
+            amount = M(live.Sum(o => (decimal)o["total"]!)),
+            cancelled = orders.Count - live.Count,
+        },
+    });
 });
+
+/// <summary>অনেকগুলো অর্ডারের লাইন একবারে আনা — একটা একটা করে আনলে দূরের ডেটাবেজে অনেক সময় লাগে।</summary>
+void HydrateMany(IDbConnection c, List<Dictionary<string, object?>> orders)
+{
+    var byId = orders.ToDictionary(o => (int)o["id"]!);
+    foreach (var o in orders)
+    {
+        o["lines"] = new List<Dictionary<string, object?>>();
+        o["accepted"] = Accepted(o);
+    }
+    // SQL Server-এ একটা কোয়েরিতে প্যারামিটারের সীমা আছে, তাই ভাগে ভাগে
+    foreach (var chunk in byId.Keys.Chunk(1000))
+        foreach (var l in DL(c.Query("SELECT * FROM dbo.order_lines WHERE order_id IN @ids ORDER BY id",
+                     new { ids = chunk })))
+            ((List<Dictionary<string, object?>>)byId[(int)l["order_id"]!]["lines"]!).Add(l);
+}
 
 app.MapPost("/api/orders", (HttpContext ctx, OrderReq b) =>
 {
@@ -727,13 +783,17 @@ app.MapPost("/api/orders", (HttpContext ctx, OrderReq b) =>
 
     var items = LoadItems(onlyActive: false).ToDictionary(i => (int)i["id"]!);
     var prepared = new List<Dictionary<string, object?>>();
+    // চাওয়া হয়েছিল কিন্তু বসানো গেল না — চুপচাপ বাদ না দিয়ে ইউজারকে জানাতে হবে
+    var dropped = new List<string>();
+    var requested = 0;
 
     foreach (var l in b.lines ?? new List<LineDto>())
     {
-        if (!items.TryGetValue(l.item_id ?? 0, out var item)) continue;
-        if (!SoldAt(item, shopId)) continue;   // এই দোকানে জিনিসটা নেই
         var qty = Math.Clamp(l.qty ?? 0, 0, 99);
         if (qty == 0) continue;
+        requested++;
+        if (!items.TryGetValue(l.item_id ?? 0, out var item)) { dropped.Add("একটা পুরোনো আইটেম"); continue; }
+        if (!SoldAt(item, shopId)) { dropped.Add((string)item["name"]!); continue; }   // এই দোকানে জিনিসটা নেই
 
         var opts = (List<Dictionary<string, object?>>)item["options"]!;
         var opt = opts.FirstOrDefault(o => (int)o["id"]! == (l.option_id ?? 0));
@@ -772,16 +832,37 @@ app.MapPost("/api/orders", (HttpContext ctx, OrderReq b) =>
         });
     }
 
+    // ---- কিছু বদলানোর আগেই যাচাই: অর্ডার কখনো চুপচাপ মুছে যাবে না ----
+    // আগে সব লাইন বাদ পড়লে (যেমন বাছা দোকানে জিনিসগুলো নেই) অর্ডারটা টাকার হিসাবসহ
+    // ডেটাবেজ থেকে মুছে যেত, অথচ পর্দায় দেখাত "✅ অর্ডার সেভ হয়েছে"।
+    if (prepared.Count == 0)
+    {
+        if (requested > 0)
+            return Fail(400, shopId is null
+                ? "কোন দোকান থেকে আনবেন সেটা আগে বেছে নিন"
+                : $"{shopName}-এ এগুলো পাওয়া যায় না: {string.Join(", ", dropped.Distinct())} — অন্য দোকান বেছে নিন");
+
+        // একদম খালি পাঠানো = বাতিল। শুধু স্টাফ পারেন, আর মোছা হয় না — "বাতিল" অবস্থা হয়
+        var active = existing is not null && (string)existing.status != "cancelled";
+        if (!active) return Fail(400, "অন্তত একটা জিনিস বেছে নিন");
+        if (me.role == "user") return Fail(400, LockReason(date, me.floor, existing));
+        CancelOrder(c, (int)existing!.id, me.id);
+        return Results.Json(new { ok = true, id = (int)existing.id, total = 0m, cancelled = true, dropped });
+    }
+
     var total = M(prepared.Sum(p => (decimal)p["subtotal"]!));
     int orderId;
     if (existing is not null)
     {
         orderId = (int)existing.id;
-        // অর্ডার বদলালে "গ্রহণ করা হয়েছে" মুছে যায় — স্টাফ যেন নতুন তালিকাটা দেখে আবার নেন
+        // অর্ডার বদলালে "গ্রহণ করা হয়েছে" মুছে যায় — স্টাফ যেন নতুন তালিকাটা দেখে আবার নেন।
+        // বাতিল অর্ডারের দিনে আবার অর্ডার দিলে ওই সারিটাই নতুন করে চালু হয় (দিনে একটাই অর্ডার)।
         c.Execute(
             @"UPDATE dbo.orders
                  SET note=@n, total=@t, shop_id=@sid, shop_name=@sn, updated_at=@u,
-                     accepted_at = NULL, accepted_by = NULL
+                     accepted_at = NULL, accepted_by = NULL,
+                     status = CASE WHEN status = 'cancelled' THEN 'pending' ELSE status END,
+                     cancelled_at = NULL, cancelled_by = NULL
                WHERE id=@i",
             new { n = note, t = total, sid = shopId, sn = shopName, u = Db.Stamp(), i = orderId });
         c.Execute("DELETE FROM dbo.order_lines WHERE order_id = @o", new { o = orderId });
@@ -817,20 +898,32 @@ app.MapPost("/api/orders", (HttpContext ctx, OrderReq b) =>
                 fallback_note = p["fallback_note"],
             });
 
-    if (prepared.Count == 0)
-    {
-        c.Execute("DELETE FROM dbo.ledger WHERE ref_order_id = @o", new { o = orderId });
-        c.Execute("DELETE FROM dbo.orders WHERE id = @i", new { i = orderId });
-    }
-    else SyncCharge(orderId);
+    SyncCharge(orderId);
 
     // পরেরবার যেন দোকানটা নিজে থেকেই বাছা থাকে — একটা ক্লিক কম
     if (shopId is not null)
         c.Execute("UPDATE dbo.users SET default_shop_id = @s WHERE id = @i",
             new { s = shopId, i = targetUserId });
 
-    return Results.Json(new { ok = true, id = orderId, total });
+    // কিছু লাইন বাদ পড়লে সেটাও ফেরত যায়, যাতে পর্দায় সত্যি কথাটা দেখানো যায়
+    return Results.Json(new { ok = true, id = orderId, total, dropped = dropped.Distinct().ToList() });
 });
+
+/// <summary>
+/// অর্ডার বাতিল — মোছা নয়। লাইনগুলো থেকে যায়, ইতিহাসে "বাতিল" হিসেবে দেখা যায়,
+/// শুধু খরচটা হিসাব থেকে সরে যায় (SyncCharge শুধু "দেওয়া হয়েছে" অর্ডারেই খরচ বসায়)।
+/// </summary>
+void CancelOrder(IDbConnection c, int orderId, int byUserId)
+{
+    var t = Db.Stamp();
+    c.Execute(
+        @"UPDATE dbo.orders
+             SET status = 'cancelled', cancelled_at = @t, cancelled_by = @b,
+                 accepted_at = NULL, accepted_by = NULL, updated_at = @t
+           WHERE id = @i",
+        new { t, b = byUserId, i = orderId });
+    SyncCharge(orderId);
+}
 
 app.MapGet("/api/orders", (HttpContext ctx, string? date, string? floor) =>
 {
@@ -975,10 +1068,9 @@ app.MapDelete("/api/orders/{id:int}", (HttpContext ctx, int id) =>
             return Fail(400, LockReason((string)o.order_date, me.floor, o));
     }
     var fErr = NotMyFloor(me, (int)o.user_id); if (fErr is not null) return fErr;
-    c.Execute("DELETE FROM dbo.ledger WHERE ref_order_id = @o", new { o = id });
-    c.Execute("DELETE FROM dbo.order_lines WHERE order_id = @o", new { o = id });
-    c.Execute("DELETE FROM dbo.orders WHERE id = @i", new { i = id });
-    return Results.Json(new { ok = true });
+    // মুছে ফেলা নয় — "বাতিল" করে রাখা, যাতে ইতিহাসে পুরোনো অর্ডারটা থেকে যায়
+    if ((string)o.status != "cancelled") CancelOrder(c, id, me.id);
+    return Results.Json(new { ok = true, cancelled = true });
 });
 
 // =============================================== বাজারের লিস্ট (popup)
@@ -1113,18 +1205,18 @@ app.MapGet("/api/plating", (HttpContext ctx, string? date, string? floor) =>
         o["lines"] = mine;
         // পাওয়া যায়নি এমন লাইনে হাতে যাবে বদলি জিনিসটাই — প্লেটের সংখ্যা সেটাই
         o["qty"] = mine.Sum(l => (bool)l["missing"]! ? (int)l["sub_qty"]! : (int)l["qty"]!);
+    }
 
-        // হাতে কত টাকা দিয়েছিলেন আর নাস্তা দেওয়ার সময় কত ফেরত দিতে হবে
+    // টাকার হিসাব টাকার পাতার সাথে হুবহু এক খাতা থেকেই — দুই জায়গায় দুই অঙ্ক যেন না দেখায়
+    var plateBooks = MoneyEntriesFor(c, orders.Select(o => (int)o["user_id"]!).ToList());
+    foreach (var o in orders)
+    {
         var uid = (int)o["user_id"]!;
-        var bal = BalanceOf(uid);
-        // খরচ বসে শুধু "দেওয়া হয়েছে" হলে — তাই তার আগে খরচটা হাতে বাদ দিয়ে হিসাব
-        var pending = (string)o["status"]! == "delivered" ? 0m : (decimal)o["total"]!;
-        o["balance"] = bal;
-        o["to_return"] = M(bal - pending);
-        o["paid_today"] = c.ExecuteScalar<decimal>(
-            @"SELECT ISNULL(SUM(amount), 0) FROM dbo.ledger
-               WHERE user_id = @u AND type = 'deposit' AND created_at LIKE @d + '%'",
-            new { u = uid, d });
+        var st = Statement(plateBooks[uid], d, d);
+        o["opening"] = st["opening"];
+        o["balance"] = BalanceOf(uid);
+        o["to_return"] = st["now"];
+        o["paid_today"] = ((Dictionary<string, object?>)st["totals"]!)["deposit"];
     }
 
     return Results.Json(new
@@ -1191,13 +1283,17 @@ app.MapGet("/api/money-today", (HttpContext ctx, string? date, string? floor) =>
            WHERE u.active = 1 AND u.role = 'user' AND (@f IS NULL OR u.floor = @f)
            ORDER BY u.name", new { d, f }));
 
+    // সবার খাতা একবারে — "৫০ ফেরত" কোথা থেকে এল সেটা যেন স্টাফ দেখতে পান:
+    // আগের জমা ২০০ → আগের দিনগুলোর নাস্তা বাদ → আজ দিলেন → আজকের নাস্তা → এখন কত
+    var books = MoneyEntriesFor(c, rows.Select(r => (int)r["id"]!).ToList());
     foreach (var r in rows)
     {
-        var bal = BalanceOf((int)r["id"]!);
-        // খরচ বসে শুধু "দেওয়া হয়েছে" হলে — তার আগে দামটা হাতে বাদ দিয়ে হিসাব
-        var pending = (string?)r["order_status"] == "delivered" ? 0m : (decimal)r["order_total"]!;
-        r["balance"] = bal;
-        r["to_return"] = M(bal - pending);
+        var book = books[(int)r["id"]!];
+        var st = Statement(book, d, d);
+        r["opening"] = st["opening"];              // আজ শুরুর আগে হাতে কত জমা ছিল
+        r["balance"] = BalanceOf((int)r["id"]!);   // শুধু লেজার (দেওয়া বাকি অর্ডার ছাড়া)
+        // এখন আসলে কত — যেসব অর্ডার এখনো দেওয়া হয়নি সেগুলোর দামও বাদ (আগের দিনেরও)
+        r["to_return"] = st["now"];
     }
 
     var give = rows.Where(r => (decimal)r["to_return"]! > 0).ToList();
@@ -1253,89 +1349,148 @@ app.MapGet("/api/ledger/my", (HttpContext ctx) =>
     return Results.Json(new { balance = BalanceOf(me.id), rows });
 });
 
+// ------------------------------------------------------ টাকার খাতা (পাসবই)
 /// <summary>
-/// ইউজারের নিজের ড্যাশবোর্ড — দুটো ভাগ:
-/// (১) রোজ কত দিলেন আর কত ফেরত পাবেন, (২) এখন পর্যন্ত মোট কত টাকার নাস্তা খেয়েছেন।
-/// টাকার হিসাব লেজার ধরেই করা হয়, তাই যোগফল সবসময় ব্যালেন্সের সাথে মেলে।
+/// একজনের সব টাকার ঘটনা, সময় ধরে সাজানো — ব্যাংকের পাসবইয়ের মতো।
+/// <para>
+/// লেজারে থাকে জমা, ফেরত, সমন্বয় আর "দেওয়া হয়েছে" অর্ডারের খরচ। কিন্তু যে অর্ডার
+/// এখনো দেওয়া হয়নি তার খরচ লেজারে বসে না — অথচ টাকাটা তো যাবেই। তাই সেগুলোও
+/// "⏳ দেওয়া বাকি" হিসেবে ধরা হয়। নইলে ২০০ টাকা জমা দিয়ে তিন দিন খেলেও খাতায় ২০০-ই
+/// দেখাত, আর স্টাফের "৫০ ফেরত" কোথা থেকে এল কেউ বুঝত না।
+/// </para>
+/// দুবার গোনা হয় না: দেওয়া হলে অর্ডারটা "বাকি" থেকে সরে গিয়ে লেজারের খরচ হয়ে যায়।
 /// </summary>
-app.MapGet("/api/me/dashboard", (HttpContext ctx) =>
+Dictionary<int, List<Dictionary<string, object?>>> MoneyEntriesFor(IDbConnection c, ICollection<int> userIds)
+{
+    var map = userIds.Distinct().ToDictionary(id => id, _ => new List<Dictionary<string, object?>>());
+    if (map.Count == 0) return map;
+    var ids = map.Keys.ToList();
+
+    foreach (var l in c.Query(
+        @"SELECT l.id, l.user_id, l.type, l.amount, l.note, l.created_at, l.ref_order_id, o.order_date
+            FROM dbo.ledger l LEFT JOIN dbo.orders o ON o.id = l.ref_order_id
+           WHERE l.user_id IN @ids", new { ids }))
+    {
+        string type = l.type;
+        decimal amt = l.amount;
+        map[(int)l.user_id].Add(new Dictionary<string, object?>
+        {
+            ["at"] = (string)l.created_at,
+            ["kind"] = type,
+            // জমা আর সমন্বয় যোগ হয় (সমন্বয় নিজেই ঋণাত্মক হতে পারে); খরচ আর ফেরত বিয়োগ
+            ["amount"] = M(type is "deposit" or "adjust" ? amt : -amt),
+            ["note"] = (string)l.note,
+            ["order_id"] = (int?)l.ref_order_id,
+            ["order_date"] = (string?)l.order_date,
+            ["ledger_id"] = (int)l.id,
+            ["pending"] = false,
+        });
+    }
+
+    foreach (var o in c.Query(
+        @"SELECT id, user_id, order_date, total, status, shop_name, created_at FROM dbo.orders
+           WHERE user_id IN @ids AND status NOT IN ('delivered', 'cancelled') AND total > 0", new { ids }))
+    {
+        map[(int)o.user_id].Add(new Dictionary<string, object?>
+        {
+            ["at"] = (string)o.created_at,
+            ["kind"] = "pending",
+            ["amount"] = M(-(decimal)o.total),
+            ["note"] = (string)o.shop_name,
+            ["order_id"] = (int)o.id,
+            ["order_date"] = (string)o.order_date,
+            ["ledger_id"] = null,
+            ["pending"] = true,
+            ["status"] = (string)o.status,
+        });
+    }
+
+    foreach (var list in map.Values)
+    {
+        list.Sort((a, b) =>
+        {
+            var byTime = string.CompareOrdinal((string)a["at"]!, (string)b["at"]!);
+            return byTime != 0 ? byTime : ((int?)a["ledger_id"] ?? int.MaxValue).CompareTo((int?)b["ledger_id"] ?? int.MaxValue);
+        });
+        decimal run = 0m;
+        foreach (var r in list)
+        {
+            run = M(run + (decimal)r["amount"]!);
+            r["balance"] = run;                      // এই ঘটনার পর হাতে কত রইল
+            r["date"] = ((string)r["at"]!)[..10];
+        }
+    }
+    return map;
+}
+
+/// <summary>
+/// খাতার একটা সময়ের টুকরো: শুরুতে কত ছিল, মাঝের ঘটনাগুলো, শেষে কত রইল।
+/// from/to না দিলে পুরো ইতিহাস।
+/// </summary>
+Dictionary<string, object?> Statement(List<Dictionary<string, object?>> all, string? from, string? to)
+{
+    decimal opening = 0m;
+    var rows = new List<Dictionary<string, object?>>();
+    foreach (var r in all)
+    {
+        var day = (string)r["date"]!;
+        if (from is not null && string.CompareOrdinal(day, from) < 0) { opening = (decimal)r["balance"]!; continue; }
+        if (to is not null && string.CompareOrdinal(day, to) > 0) continue;
+        rows.Add(r);
+    }
+    decimal Sum(string kind, bool negate = false) =>
+        M(rows.Where(r => (string)r["kind"]! == kind).Sum(r => negate ? -(decimal)r["amount"]! : (decimal)r["amount"]!));
+
+    var charge = Sum("charge", negate: true);
+    var pending = Sum("pending", negate: true);
+    return new Dictionary<string, object?>
+    {
+        ["from"] = from,
+        ["to"] = to,
+        ["opening"] = opening,
+        ["closing"] = rows.Count > 0 ? (decimal)rows[^1]["balance"]! : opening,
+        ["now"] = all.Count > 0 ? (decimal)all[^1]["balance"]! : 0m,
+        ["rows"] = rows,
+        ["totals"] = new Dictionary<string, object?>
+        {
+            ["deposit"] = Sum("deposit"),
+            ["refund"] = Sum("refund", negate: true),
+            ["adjust"] = Sum("adjust"),
+            ["charge"] = charge,
+            ["pending"] = pending,
+            // খেয়েছেন = দেওয়া হয়ে গেছে + এখনো দেওয়া বাকি (বাতিল অর্ডার এখানে আসেই না)
+            ["food"] = M(charge + pending),
+            ["food_days"] = rows.Where(r => (string)r["kind"]! is "charge" or "pending" && r["order_date"] is string)
+                                .Select(r => (string)r["order_date"]!).Distinct().Count(),
+        },
+    };
+}
+
+/// <summary>
+/// টাকার খাতা। ইউজার নিজেরটা দেখেন; স্টাফ নিজের তলার কারো user_id দিয়ে তারটা।
+/// from/to (yyyy-MM-dd) দিলে ওই সময়টুকু, সাথে শুরুর জের আর সব সময়ের মোট।
+/// </summary>
+app.MapGet("/api/ledger/statement", (HttpContext ctx, int? user_id, string? from, string? to) =>
 {
     var (me, err) = Auth(ctx); if (err is not null) return err;
+    var uid = me!.id;
+    if (user_id is int u && u != me.id)
+    {
+        if (me.role == "user") return Fail(403, "এটা আপনার হিসাব না");
+        var fErr = NotMyFloor(me, u); if (fErr is not null) return fErr;
+        uid = u;
+    }
     using var c = Db.Open();
+    var who = c.QueryFirstOrDefault("SELECT id, name, pin, floor FROM dbo.users WHERE id = @i", new { i = uid });
+    if (who is null) return Fail(404, "ইউজার নেই");
 
-    var led = c.Query<(string day, string type, decimal amount)>(
-        @"SELECT LEFT(created_at, 10) AS day, type, amount FROM dbo.ledger
-           WHERE user_id = @u", new { u = me!.id }).ToList();
-
-    var orders = DL(c.Query(
-        @"SELECT order_date, total, status, accepted_at FROM dbo.orders
-           WHERE user_id = @u AND status <> 'cancelled'", new { u = me.id }));
-
-    var map = new Dictionary<string, Dictionary<string, object?>>();
-    Dictionary<string, object?> Row(string day)
-    {
-        if (!map.TryGetValue(day, out var r))
-            map[day] = r = new Dictionary<string, object?>
-            {
-                ["date"] = day,
-                ["deposit"] = 0m, ["refund"] = 0m, ["adjust"] = 0m, ["charge"] = 0m,
-                ["order_total"] = 0m, ["order_status"] = null, ["accepted"] = false, ["has_order"] = false,
-            };
-        return r;
-    }
-
-    foreach (var l in led)
-    {
-        if (string.IsNullOrEmpty(l.day)) continue;
-        var r = Row(l.day);
-        var k = l.type switch
-        {
-            "deposit" => "deposit", "refund" => "refund",
-            "charge" => "charge", "adjust" => "adjust", _ => null,
-        };
-        if (k is not null) r[k] = M((decimal)r[k]! + l.amount);
-    }
-
-    foreach (var o in orders)
-    {
-        var r = Row((string)o["order_date"]!);
-        r["order_total"] = M((decimal)r["order_total"]! + (decimal)o["total"]!);
-        r["order_status"] = o["status"];
-        r["accepted"] = Accepted(o);
-        r["has_order"] = true;
-    }
-
-    var days = map.Values.OrderBy(r => (string)r["date"]!).ToList();
-    // পুরোনো থেকে শুরু করে প্রতিদিন শেষে হাতে কত জমা ছিল
-    decimal run = 0m;
-    foreach (var r in days)
-    {
-        run += (decimal)r["deposit"]! + (decimal)r["adjust"]! - (decimal)r["charge"]! - (decimal)r["refund"]!;
-        r["balance_after"] = M(run);
-    }
-    days.Reverse();   // দেখানোর সময় আজকেরটা সবার উপরে
-
-    decimal Sum(string type) => M(led.Where(l => l.type == type).Sum(l => l.amount));
-    // এখনো "দেওয়া হয়েছে" হয়নি — তাই খরচ বসেনি, কিন্তু টাকাটা যাবে
-    var pending = M(orders.Where(o => (string)o["status"]! != "delivered")
-                          .Sum(o => (decimal)o["total"]!));
-
-    return Results.Json(new
-    {
-        balance = BalanceOf(me.id),
-        money_module = Db.GetSettings()["money_module"] == "1",
-        totals = new
-        {
-            deposit = Sum("deposit"),
-            charge = Sum("charge"),
-            refund = Sum("refund"),
-            adjust = Sum("adjust"),
-            pending,
-            eaten_days = orders.Count(o => (string)o["status"]! == "delivered"),
-            order_days = orders.Count,
-        },
-        days,
-    });
+    var all = MoneyEntriesFor(c, new[] { uid })[uid];
+    var period = Statement(all, IsDate(from) ? from : null, IsDate(to) ? to : null);
+    var ever = Statement(all, null, null);
+    period["user"] = D(who);
+    period["ever"] = ever["totals"];
+    period["ledger_balance"] = BalanceOf(uid);
+    return Results.Json(period);
 });
 
 app.MapGet("/api/ledger/balances", (HttpContext ctx, string? floor) =>
@@ -1353,8 +1508,15 @@ app.MapGet("/api/ledger/balances", (HttpContext ctx, string? floor) =>
            WHERE u.active = 1 AND (@f IS NULL OR u.floor = @f)
            GROUP BY u.id, u.name, u.role, u.floor
            ORDER BY u.floor, u.name", new { f }));
+    // সবার পাতায় একই অঙ্ক দেখাতে — দেওয়া বাকি অর্ডারের দামও বাদ দিয়ে "এখন কত"
+    var books = MoneyEntriesFor(c, rows.Select(r => (int)r["id"]!).ToList());
     foreach (var r in rows)
+    {
         r["balance"] = M((decimal)r["deposit"]! + (decimal)r["adjust"]! - (decimal)r["charge"]! - (decimal)r["refund"]!);
+        var book = books[(int)r["id"]!];
+        r["pending"] = M(book.Where(x => (bool)x["pending"]!).Sum(x => -(decimal)x["amount"]!));
+        r["now"] = book.Count > 0 ? (decimal)book[^1]["balance"]! : 0m;
+    }
     return Results.Json(rows);
 });
 
@@ -1393,9 +1555,12 @@ app.MapPost("/api/ledger/refund-all", (HttpContext ctx, RefundAllReq b) =>
     var (me, err) = Auth(ctx, "staff"); if (err is not null) return err;
     var uid = b.user_id ?? 0;
     var fErr = NotMyFloor(me!, uid); if (fErr is not null) return fErr;
-    var bal = BalanceOf(uid);
-    if (bal <= 0) return Fail(400, "ফেরত দেওয়ার মতো টাকা নেই");
     using var c = Db.Open();
+    // শুধু লেজারের অঙ্ক ফেরত দিলে বেশি চলে যেত — যে অর্ডার এখনো দেওয়া হয়নি তার
+    // দামটাও তো ওই টাকা থেকেই যাবে। তাই খাতার "এখন কত" অঙ্কটাই ফেরত।
+    var book = MoneyEntriesFor(c, new[] { uid })[uid];
+    var bal = book.Count > 0 ? (decimal)book[^1]["balance"]! : 0m;
+    if (bal <= 0) return Fail(400, "ফেরত দেওয়ার মতো টাকা নেই");
     c.Execute(
         @"INSERT INTO dbo.ledger(user_id, type, amount, note, created_by, created_at)
           VALUES(@u, 'refund', @a, @n, @b, @t)",
@@ -1587,6 +1752,7 @@ app.MapDelete("/api/users/{id:int}", (HttpContext ctx, int id) =>
     c.Execute("UPDATE dbo.day_status SET updated_by = NULL WHERE updated_by = @i", new { i = id });
     c.Execute("UPDATE dbo.ledger SET created_by = NULL WHERE created_by = @i", new { i = id });
     c.Execute("UPDATE dbo.orders SET accepted_by = NULL WHERE accepted_by = @i", new { i = id });
+    c.Execute("UPDATE dbo.orders SET cancelled_by = NULL WHERE cancelled_by = @i", new { i = id });
     c.Execute("DELETE FROM dbo.users WHERE id = @i", new { i = id });
     return Results.Json(new { ok = true });
 });

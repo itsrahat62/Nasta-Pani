@@ -2,7 +2,7 @@
 // ফাইল বদলালে এই নামটা বাড়িয়ে দিন — পুরোনো ক্যাশ মুছে নতুন শেল বসে।
 // (ভার্সন বাড়ালে ফাইলের সাইজ যদি একই থাকে, তবুও ডিপ্লয় হবে — ওয়ার্কফ্লোতে
 //  --ignore-time তুলে দেওয়া হয়েছে, নইলে সমান-সাইজের বদল আপলোড হতো না।)
-const CACHE = 'nasta-v3';
+const CACHE = 'nasta-v4';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (e) => {

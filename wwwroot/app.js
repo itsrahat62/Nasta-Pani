@@ -24,10 +24,78 @@ function shortDate(iso) {
   const [, m, d] = iso.split('-').map(Number);
   return `${bn(d)} ${MONTHS[m - 1]}`;
 }
+// ষষ্ঠী বিভক্তি — "সেপ্টেম্বর-এর" নয়, "সেপ্টেম্বরের"; "জানুয়ারি-এর" নয়, "জানুয়ারির"
+const MONTHS_OF = ['জানুয়ারির','ফেব্রুয়ারির','মার্চের','এপ্রিলের','মে-র','জুনের','জুলাইয়ের','আগস্টের','সেপ্টেম্বরের','অক্টোবরের','নভেম্বরের','ডিসেম্বরের'];
+/** "১২ সেপ্টেম্বরের" */
+function dateOf(iso) {
+  if (!iso) return '';
+  const [, m, d] = iso.split('-').map(Number);
+  return `${bn(d)} ${MONTHS_OF[m - 1]}`;
+}
 function addDays(iso, n) {
   const [y, m, d] = iso.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d + n));
   return dt.toISOString().slice(0, 10);
+}
+
+// ------------------------------------------------------- কোন সময়ের হিসাব দেখব
+// মাস ধরে, অমুক তারিখ থেকে আজ পর্যন্ত, অথবা শুরু থেকে সব — ইতিহাস আর টাকার খাতা
+// দুটোতেই একই বাছাই চলে, তাই এক জায়গায় রাখা।
+function addMonths(ym, n) {
+  const [y, m] = ym.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1 + n, 1));
+  return dt.toISOString().slice(0, 7);
+}
+function periodRange() {
+  const today = S.boot.today;
+  const p = S.period || { mode: 'month', month: today.slice(0, 7) };
+  if (p.mode === 'all') return { from: null, to: null, label: 'শুরু থেকে আজ পর্যন্ত সব' };
+  if (p.mode === 'since') return { from: p.from, to: today, label: `${shortDate(p.from)} থেকে আজ পর্যন্ত` };
+  const [y, m] = p.month.split('-').map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return {
+    from: `${p.month}-01`,
+    // চলতি মাস হলে আজ পর্যন্ত, আগের মাস হলে মাসের শেষ দিন পর্যন্ত
+    to: p.month === today.slice(0, 7) ? today : `${p.month}-${String(last).padStart(2, '0')}`,
+    label: `${MONTHS[m - 1]} ${bn(y)}`,
+  };
+}
+function periodQS(extra = {}) {
+  const r = periodRange();
+  const q = new URLSearchParams(extra);
+  if (r.from) q.set('from', r.from);
+  if (r.to) q.set('to', r.to);
+  const s = q.toString();
+  return s ? '?' + s : '';
+}
+/** সময় বাছাইয়ের ছোট কার্ড — মাস আগে-পিছে, "এই মাস", "সব", আর "অমুক তারিখ থেকে আজ পর্যন্ত" */
+function periodBar() {
+  const today = S.boot.today;
+  const cur = today.slice(0, 7);
+  const p = S.period || { mode: 'month', month: cur };
+  const month = p.mode === 'month' ? p.month : cur;
+  const r = periodRange();
+  const [y, m] = month.split('-').map(Number);
+  return `<div class="card period"><div class="card-b">
+    <div class="period-row">
+      <button class="btn sm" data-act="period" data-mode="month" data-month="${addMonths(month, -1)}" title="আগের মাস">←</button>
+      <button class="btn sm grow ${p.mode === 'month' ? 'primary' : ''}" data-act="period" data-mode="month"
+        data-month="${month}">🗓️ ${MONTHS[m - 1]} ${bn(y)}</button>
+      <button class="btn sm" data-act="period" data-mode="month" data-month="${addMonths(month, 1)}"
+        ${month >= cur ? 'disabled' : ''} title="পরের মাস">→</button>
+      <button class="btn sm ${p.mode === 'all' ? 'primary' : ''}" data-act="period" data-mode="all">সব</button>
+    </div>
+    <label class="period-since ${p.mode === 'since' ? 'on' : ''}">
+      <span>এই তারিখ থেকে আজ পর্যন্ত</span>
+      <input class="input" type="date" id="psince" max="${today}" value="${p.mode === 'since' ? p.from : ''}" />
+    </label>
+    <div class="hint" style="margin:6px 0 0">দেখাচ্ছে: <b>${esc(r.label)}</b></div>
+  </div></div>`;
+}
+/** সময় বদলালে যে পাতা বা শিট খোলা আছে সেটাই নতুন করে আঁকা */
+function repaintPeriod() {
+  if (S.ledgerSheet) return userLedgerSheet(S.ledgerSheet.id, S.ledgerSheet.tab);
+  render();
 }
 
 // ------------------------------------------------------------ রঙ ও ইমোজি
@@ -168,6 +236,8 @@ function closeSheet() {
   const s = $('#sheet');
   if (s) s.remove();
   document.body.style.overflow = '';
+  // কারো খাতা আর খোলা নেই — সময় বদলালে এখন মূল পাতাটাই নতুন করে আঁকা হবে
+  S.ledgerSheet = null;
 }
 
 // ------------------------------------------------------------------ boot
@@ -531,6 +601,9 @@ function paintOrder() {
       ? `<div class="banner warn"><span class="ic">🔒</span><div>${esc(S.orderMeta.lock_reason)}</div></div>` : ''}
     ${!locked && S.orderMeta.late_note
       ? `<div class="banner warn"><span class="ic">⏳</span><div>${esc(S.orderMeta.late_note)}</div></div>` : ''}
+    ${S.orderMeta.cancelled_order && !S.orderMeta.order ? `<div class="banner muted"><span class="ic">🚫</span><div>
+      এই দিনের আগের অর্ডারটা (${tk(S.orderMeta.cancelled_order.total)}) বাতিল করা হয়েছিল
+      <small>ইতিহাসে ওটা "বাতিল" হিসেবে থেকে গেছে। চাইলে নিচে থেকে নতুন করে অর্ডার দিন।</small></div></div>` : ''}
     ${acceptBanner()}
     ${subsNotice()}
     ${canQuick ? `
@@ -577,7 +650,7 @@ function paintOrder() {
       💵 হাতে টাকা দিলেন? লিখে রাখুন</button>` : ''}
     <!-- রোজকার অর্ডার সেভ করা আজকের অর্ডার ছোঁয় না, তাই লক থাকলেও এটা চলবে -->
     ${count > 0 ? `<button class="btn block" data-act="usualsave" style="margin-top:10px">⭐ ${S.orderFor ? `${esc(S.orderFor.name)}-এর রোজকার অর্ডার করে রাখুন` : 'এটাই আমার রোজকার অর্ডার করে রাখুন'}</button>` : ''}
-    ${S.orderMeta.order && !locked ? `<button class="btn danger block" data-act="delorder" style="margin-top:10px">আজকের অর্ডার বাতিল করুন</button>` : ''}
+    ${S.orderMeta.order && !locked ? `<button class="btn danger block" data-act="delorder" style="margin-top:10px">🚫 এই অর্ডার বাতিল করুন</button>` : ''}
     ${S.orderFor ? `<button class="btn block" data-act="orderforclear" style="margin-top:10px">← আজকের তালিকায় ফিরুন</button>` : ''}
   `, {
     title: S.orderFor ? `${S.orderFor.name}-এর অর্ডার` : undefined,
@@ -806,7 +879,7 @@ async function saveOrder(silent = false) {
   const lines = [...S.cart.values()];
   const note = $('#ordernote')?.value || '';
   try {
-    await api('/api/orders', {
+    const r = await api('/api/orders', {
       method: 'POST',
       body: {
         date: S.orderMeta.date,
@@ -817,106 +890,168 @@ async function saveOrder(silent = false) {
       },
     });
     S.dirty = false;
-    if (!silent) toast(lines.length ? '✅ অর্ডার সেভ হয়েছে' : 'অর্ডার খালি করা হলো', 'ok');
+    // সার্ভার যা আসলে করেছে সেটাই বলা — আগে সব লাইন বাদ পড়লেও "সেভ হয়েছে" দেখাত
+    if (r.cancelled) toast('🚫 অর্ডারটা বাতিল করা হলো — ইতিহাসে থেকে যাবে', 'ok');
+    else if (r.dropped?.length) toast(`⚠️ সেভ হয়েছে, কিন্তু এগুলো এই দোকানে নেই বলে বাদ গেল: ${r.dropped.join(', ')}`, 'err');
+    else if (!silent) toast(`✅ অর্ডার সেভ হয়েছে · ${tk(r.total)}`, 'ok');
     viewOrder();
-  } catch (e) { toast(e.message, 'err'); }
+  } catch (e) {
+    // সেভ না হলে কার্টে যা ছিল তা-ই থাকে — কিছু হারায় না, আবার চেষ্টা করা যায়
+    toast(e.message, 'err');
+  }
 }
 
 // =========================================================== ২. ইতিহাস
+/** একটা দিনের অর্ডার কার্ড — ইউজারের ইতিহাসে আর স্টাফের "কার কী" শিটে একই চেহারা */
+function orderCard(o, oi) {
+  const off = o.status === 'cancelled';
+  const st = OSTATUS[o.status] || { t: o.status, c: '' };
+  return `<div class="card ${off ? 'cancelled' : ''}" style="${accent(oi)}">
+    <div class="card-h">
+      <div class="grow"><h2>${niceDate(o.order_date)}</h2>
+        ${o.shop_name ? `<div class="hint" style="margin:0">🏪 ${esc(o.shop_name)}</div>` : ''}</div>
+      ${off ? '' : o.accepted ? `<span class="chip ok" title="স্টাফ গ্রহণ করেছেন">✅ গৃহীত</span>`
+        : `<span class="chip warn" title="এখনো গ্রহণ করা হয়নি">⏳</span>`}
+      <span class="chip ${st.c}">${off ? '🚫 ' : ''}${st.t}</span>
+      <b class="amt">${tk(o.total)}</b>
+    </div>
+    <div class="card-b tight">
+      ${o.lines.map((l) => `<div class="item ${l.missing ? 'gone' : ''}">
+        <div class="ava">${l.missing ? '🔁' : emojiFor(l.item_name)}</div>
+        <div class="info"><div class="nm">${esc(l.item_name)}${l.option_name ? ` <span class="chip brand">${esc(l.option_name)}</span>` : ''}</div>
+          <div class="pr">${l.missing ? esc(subTextOf(l)) : `${tk(l.unit_price)} × ${bn(l.qty)}`}</div></div>
+        <b class="amt">${tk(l.missing ? l.sub_subtotal : l.subtotal)}</b>
+      </div>`).join('')}
+      ${off ? `<div class="item"><div class="info"><div class="pr">এই অর্ডারটা বাতিল করা হয়েছিল — টাকা কাটা হয়নি</div></div></div>` : ''}
+    </div>
+  </div>`;
+}
+
+/** এক সময়ের অর্ডারগুলোর সারাংশ — কত দিন, কত টাকা */
+function historySummary(h) {
+  const s = h.summary;
+  // এক সারিতেই থাকুক — ফোনে টাইল ভেঙে দুই লাইনে গেলে জায়গা নষ্ট
+  return `<div class="stats" style="grid-template-columns:repeat(${s.cancelled ? 3 : 2},1fr)">
+    <div class="stat g1"><div class="lbl">যত দিন অর্ডার</div><div class="val">${bn(s.days)}</div></div>
+    <div class="stat g2"><div class="lbl">মোট</div><div class="val">${tk(s.amount)}</div></div>
+    ${s.cancelled ? `<div class="stat g4"><div class="lbl">বাতিল</div><div class="val">${bn(s.cancelled)}</div></div>` : ''}
+  </div>`;
+}
+
 async function viewHistory() {
-  shell(`<div class="spin"></div>`);
-  const rows = await api('/api/orders/history');
-  shell(rows.length === 0
-    ? `<div class="empty"><div class="big">🗓️</div>এখনো কোনো অর্ডার নেই</div>`
-    : rows.map((o, oi) => `
-      <div class="card" style="${accent(oi)}">
-        <div class="card-h">
-          <div class="grow"><h2>${niceDate(o.order_date)}</h2></div>
-          ${o.accepted ? `<span class="chip ok" title="স্টাফ গ্রহণ করেছেন">✅ গৃহীত</span>`
-            : `<span class="chip warn" title="এখনো গ্রহণ করা হয়নি">⏳</span>`}
-          <span class="chip ${OSTATUS[o.status].c}">${OSTATUS[o.status].t}</span>
-          <b class="amt">${tk(o.total)}</b>
-        </div>
-        <div class="card-b tight">
-          ${o.lines.map((l) => `<div class="item ${l.missing ? 'gone' : ''}">
-            <div class="ava">${l.missing ? '🔁' : emojiFor(l.item_name)}</div>
-            <div class="info"><div class="nm">${esc(l.item_name)}${l.option_name ? ` <span class="chip brand">${esc(l.option_name)}</span>` : ''}</div>
-              <div class="pr">${l.missing ? esc(subTextOf(l)) : `${tk(l.unit_price)} × ${bn(l.qty)}`}</div></div>
-            <b class="amt">${tk(l.missing ? l.sub_subtotal : l.subtotal)}</b>
-          </div>`).join('')}
-        </div>
-      </div>`).join(''),
-    { title: 'আমার অর্ডার', sub: 'গত ৬০ দিন' });
+  shell(`<div class="spin"></div>`, { title: 'আমার অর্ডার' });
+  const r = periodRange();
+  const h = await api('/api/orders/history' + periodQS());
+  shell(`
+    ${periodBar()}
+    ${h.orders.length ? historySummary(h) : ''}
+    ${h.orders.length === 0
+      ? `<div class="empty"><div class="big">🗓️</div>এই সময়ে কোনো অর্ডার নেই
+          <div class="hint" style="margin-top:8px">(${esc(r.label)}) — উপরে অন্য মাস বা "সব" বেছে দেখুন।</div></div>`
+      : `<div class="menu-grid">${h.orders.map(orderCard).join('')}</div>`}`,
+    { title: 'আমার অর্ডার', sub: r.label });
+}
+
+// ====================================================== টাকার খাতা (পাসবই)
+/** খাতার একটা ঘটনার নাম — "💵 জমা দিলেন", "🍽️ নাস্তা · ১২ সেপ্টেম্বরের" … */
+function bookLabel(r) {
+  const od = r.order_date ? ` · ${dateOf(r.order_date)}` : '';
+  switch (r.kind) {
+    case 'deposit': return { ic: '💵', t: 'জমা দিলেন' };
+    case 'refund': return { ic: '↩️', t: 'ফেরত নিলেন' };
+    case 'adjust': return { ic: '⚖️', t: 'সমন্বয়' };
+    case 'charge': return { ic: '🍽️', t: `নাস্তা${od}` };
+    case 'pending': return { ic: '⏳', t: `নাস্তা${od} (দেওয়া বাকি)` };
+    default: return { ic: '•', t: r.kind };
+  }
+}
+/**
+ * সারির নিচের ছোট লেখা। খরচের সারিতে সার্ভার নিজে যে "2026-09-10 তারিখের নাস্তা" নোট
+ * বসায়, সেটা উপরের নামেই আছে — দুবার দেখানোর দরকার নেই।
+ */
+function bookNote(r) {
+  if (r.kind === 'charge' && /তারিখের নাস্তা$/.test(r.note || '')) return '';
+  return r.note || '';
+}
+
+/**
+ * পাসবইয়ের মতো খাতা: শুরুতে কত ছিল → প্রতিটা ঘটনা → প্রতিবারের পর কত রইল → শেষে কত।
+ * ২০০ জমা দিয়ে রোজ খেলে এখানেই দেখা যায় ২০০ → ১৫৫ → ১১০ → ৫০ কীভাবে নামছে।
+ */
+function passbook(st, { canDelete = false } = {}) {
+  const rows = st.rows || [];
+  const sign = (v) => (v > 0 ? '+' : v < 0 ? '−' : '');
+  const body = rows.map((r) => {
+    const L = bookLabel(r);
+    const amt = Number(r.amount);
+    return `<div class="pbrow ${r.pending ? 'pending' : ''}">
+      <div class="pb-what">
+        <b>${L.ic} ${esc(L.t)}</b>
+        <small>${shortDate(r.date)} · ${bn(String(r.at).slice(11, 16))}${bookNote(r) ? ` · ${esc(bookNote(r))}` : ''}</small>
+      </div>
+      <div class="pb-amt ${amt > 0 ? 'pos' : 'neg'}">${sign(amt)}${tk(Math.abs(amt))}</div>
+      <div class="pb-bal ${Number(r.balance) < 0 ? 'neg' : ''}">${tk(r.balance)}</div>
+      ${canDelete && r.ledger_id && r.kind !== 'charge'
+        ? `<button class="btn sm danger pb-del" data-act="delledger" data-id="${r.ledger_id}" title="এন্ট্রি মুছুন">✕</button>`
+        : ''}
+    </div>`;
+  }).join('');
+
+  return `<div class="card passbook"><div class="card-b tight">
+    <div class="pbrow head"><div class="pb-what">কী হলো</div><div class="pb-amt">টাকা</div><div class="pb-bal">জের</div></div>
+    <div class="pbrow edge"><div class="pb-what"><b>${st.from ? `${dateOf(st.from)} আগে জমা ছিল` : 'শুরুতে'}</b></div>
+      <div class="pb-amt"></div><div class="pb-bal">${tk(st.opening)}</div></div>
+    ${body || `<div class="empty" style="padding:22px">এই সময়ে কোনো লেনদেন নেই</div>`}
+    <div class="pbrow edge"><div class="pb-what"><b>${st.to && st.to !== S.boot.today ? `${shortDate(st.to)} শেষে` : 'এখন হাতে'}</b></div>
+      <div class="pb-amt"></div><div class="pb-bal ${Number(st.closing) < 0 ? 'neg' : ''}">${tk(st.closing)}</div></div>
+  </div></div>`;
 }
 
 // ======================================================= ৩. ড্যাশবোর্ড (ইউজার)
 /**
  * ইউজারের নিজের ড্যাশবোর্ড — দুটো ভাগ:
- *   ভাগ ১: রোজ কত টাকা দিলেন আর এখন কত ফেরত পাবেন
- *   ভাগ ২: এখন পর্যন্ত মোট কত টাকার নাস্তা খেয়েছেন
+ *   ভাগ ১: টাকার খাতা — জমা দেওয়া টাকা দিনে দিনে কীভাবে কমছে, এখন কত ফেরত পাবেন
+ *   ভাগ ২: এই সময়ে আর শুরু থেকে মোট কত টাকার নাস্তা খেয়েছেন
  */
 async function viewDashboard() {
-  shell(`<div class="spin"></div>`);
-  const [d, led] = await Promise.all([api('/api/me/dashboard'), api('/api/ledger/my')]);
-  const t = d.totals;
-  const days = d.days || [];
-  const back = d.balance;
-
-  const dayRows = days.map((r) => {
-    // আজকের অর্ডার এখনো "দেওয়া হয়েছে" হয়নি — টাকাটা যাবে, কিন্তু এখনো কাটা হয়নি
-    const soon = r.has_order && r.order_status !== 'delivered' ? Number(r.order_total) : 0;
-    const notes = [];
-    if (r.has_order) notes.push(r.accepted ? '✅ অর্ডার গৃহীত' : '⏳ গ্রহণের অপেক্ষায়');
-    if (soon) notes.push(`${tk(soon)} এখনো কাটা হয়নি`);
-    if (Number(r.refund)) notes.push(`ফেরত পেয়েছেন ${tk(r.refund)}`);
-    if (Number(r.adjust)) notes.push(`সমন্বয় ${tk(r.adjust)}`);
-    return `<div class="dayrow">
-      <div class="dr-d"><b>${shortDate(r.date)}</b><small>${esc(notes.join(' · ') || '—')}</small></div>
-      <div class="dr-m"><span class="${Number(r.deposit) ? 'pos' : 'zero'}">${
-        Number(r.deposit) ? '+' + tk(r.deposit) : '—'}</span></div>
-      <div class="dr-m"><span class="${Number(r.charge) ? 'neg' : 'zero'}">${
-        Number(r.charge) ? '−' + tk(r.charge) : '—'}</span></div>
-      <div class="dr-m"><span>${tk(r.balance_after)}</span></div>
-    </div>`;
-  }).join('');
+  shell(`<div class="spin"></div>`, { title: 'আমার ড্যাশবোর্ড' });
+  const r = periodRange();
+  const st = await api('/api/ledger/statement' + periodQS());
+  const now = Number(st.now);
+  const t = st.totals;
+  const ever = st.ever;
 
   shell(`
-    <!-- ভাগ ১ — রোজকার জমা আর ফেরত -->
-    <div class="section-title">১· রোজ কত দিলেন, কত ফেরত পাবেন</div>
-    <div class="hero ${back > 0 ? 'green' : back < 0 ? 'red' : 'blue'}">
-      <div class="lbl">${back < 0 ? 'আপনার কাছে পাওনা' : 'এখন ফেরত পাবেন'}</div>
-      <div class="val">${tk(Math.abs(back))}</div>
-      <div class="sub">${back > 0 ? 'এই টাকাটা এখন স্টাফের কাছে জমা আছে'
-        : back < 0 ? 'এই টাকাটা স্টাফকে দিতে হবে' : 'সব হিসাব মিটে গেছে'}</div>
+    <div class="hero ${now > 0 ? 'green' : now < 0 ? 'red' : 'blue'}">
+      <div class="lbl">${now < 0 ? 'আপনার কাছে পাওনা' : 'এখন ফেরত পাবেন'}</div>
+      <div class="val">${tk(Math.abs(now))}</div>
+      <div class="sub">${now > 0 ? 'এই টাকাটা এখন স্টাফের কাছে জমা আছে'
+        : now < 0 ? 'এই টাকাটা স্টাফকে দিতে হবে' : 'সব হিসাব মিটে গেছে'}${
+        Number(ever.pending) ? ` · এর মধ্যে ${tk(ever.pending)}-এর নাস্তা এখনো দেওয়া বাকি` : ''}</div>
     </div>
-    ${t.pending ? `<div class="banner info"><span class="ic">⏳</span><div>
-      ${tk(t.pending)} এখনো হিসাবে বসেনি<small>নাস্তা বুঝে পাওয়ার পরই খরচ হিসেবে কাটা হবে</small></div></div>` : ''}
-    ${days.length ? `<div class="card"><div class="card-b tight">
-      <div class="dayrow head"><div class="dr-d">দিন</div><div class="dr-m">দিলেন</div>
-        <div class="dr-m">খেলেন</div><div class="dr-m">দিন শেষে</div></div>
-      ${dayRows}
-    </div></div>` : `<div class="empty"><div class="big">🗓️</div>এখনো কোনো হিসাব শুরু হয়নি</div>`}
 
-    <!-- ভাগ ২ — এখন পর্যন্ত মোট কত খরচ -->
-    <div class="section-title">২· এখন পর্যন্ত মোট কত খরচ</div>
-    <div class="hero">
-      <div class="lbl">এখন পর্যন্ত এত টাকার নাস্তা খেয়েছেন</div>
-      <div class="val">${tk(t.charge)}</div>
-      <div class="sub">${bn(t.eaten_days)} দিনের নাস্তা${
-        t.eaten_days ? ` · দিনে গড়ে ${tk(t.charge / t.eaten_days)}` : ''}</div>
-    </div>
+    ${periodBar()}
+
+    <!-- ভাগ ১ — জমা কীভাবে কমছে -->
+    <div class="section-title">১· টাকার খাতা — জমা কীভাবে কমছে</div>
+    ${passbook(st)}
+    <p class="hint">প্রতিটা সারির ডানে <b>জের</b> = ওই ঘটনার পর আপনার কত টাকা জমা রইল।
+      ⏳ চিহ্নের নাস্তা এখনো দেওয়া হয়নি, তবু টাকাটা এখন থেকেই বাদ ধরা হয়েছে।</p>
+
+    <!-- ভাগ ২ — মোট কত খরচ -->
+    <div class="section-title">২· কত টাকার নাস্তা খেয়েছেন</div>
     <div class="stats">
-      <div class="stat g2"><div class="lbl">মোট জমা দিয়েছেন</div><div class="val">${tk(t.deposit)}</div></div>
-      <div class="stat g1"><div class="lbl">মোট খরচ</div><div class="val">${tk(t.charge)}</div></div>
+      <div class="stat g1"><div class="lbl">এই সময়ে নাস্তা</div><div class="val">${tk(t.food)}</div>
+        <div class="sub">${bn(t.food_days)} দিন${t.food_days ? ` · দিনে গড়ে ${tk(t.food / t.food_days)}` : ''}</div></div>
+      <div class="stat g2"><div class="lbl">এই সময়ে জমা</div><div class="val">${tk(t.deposit)}</div></div>
       ${Number(t.refund) ? `<div class="stat g4"><div class="lbl">ফেরত নিয়েছেন</div><div class="val">${tk(t.refund)}</div></div>` : ''}
-      <div class="stat g3"><div class="lbl">যত দিন অর্ডার</div><div class="val">${bn(t.order_days)}</div></div>
     </div>
-
-    <div class="section-title">লেনদেন</div>
-    <div class="card"><div class="card-b tight">
-      ${led.rows.length ? led.rows.map(ledgerRow).join('')
-        : `<div class="empty"><div class="big">🪙</div>কোনো লেনদেন নেই</div>`}
-    </div></div>`, { title: 'আমার ড্যাশবোর্ড', sub: 'জমা, খরচ ও ফেরত' });
+    <div class="hero" style="margin-top:4px">
+      <div class="lbl">শুরু থেকে এ পর্যন্ত মোট নাস্তা</div>
+      <div class="val">${tk(ever.food)}</div>
+      <div class="sub">${bn(ever.food_days)} দিনের · মোট জমা দিয়েছেন ${tk(ever.deposit)}${
+        Number(ever.refund) ? ` · ফেরত নিয়েছেন ${tk(ever.refund)}` : ''}</div>
+    </div>`, { title: 'আমার ড্যাশবোর্ড', sub: r.label });
 }
 
 // =========================================================== ৩. টাকার হিসাব
@@ -925,57 +1060,52 @@ async function viewMoney() {
   shell(`<div class="spin"></div>`);
 
   const list = await api('/api/ledger/balances?' + (S.floor ? 'floor=' + S.floor : ''));
-  const totalHeld = list.reduce((s, u) => s + u.balance, 0);
-  const owing = list.filter((u) => u.balance < 0);
+  // "এখন কত" = লেজার থেকে দেওয়া বাকি অর্ডারের দামও বাদ — টাকার পাতা আর খাতার সাথে হুবহু এক
+  const totalHeld = list.reduce((s, u) => s + Number(u.now), 0);
+  const owing = list.filter((u) => Number(u.now) < 0);
   shell(`
     ${floorBar()}
     <div class="hero">
       <div class="lbl">সবার মিলিয়ে আপনার হাতে আছে</div>
       <div class="val">${tk(totalHeld)}</div>
-      <div class="sub">${bn(list.filter((u) => u.balance !== 0).length)} জনের হিসাব চলছে</div>
+      <div class="sub">${bn(list.filter((u) => Number(u.now) !== 0).length)} জনের হিসাব চলছে</div>
     </div>
     ${owing.length ? `<div class="banner warn"><span class="ic">⚠️</span><div>
       ${bn(owing.length)} জনের কাছে টাকা পাওনা<small>${esc(owing.map((u) => u.name).join(', '))}</small></div></div>` : ''}
-    <div class="section-title">কার কত জমা</div>
+    <div class="section-title">কার কত জমা — নামে চাপ দিলে পুরো খাতা আর অর্ডার</div>
     <div class="card"><div class="card-b tight">
       ${list.map((u) => `<div class="list-row" data-act="userledger" data-id="${u.id}"
           style="cursor:pointer;${accent(hashIdx(u.name))}">
         <div class="ava">${esc((u.name || '?').trim()[0])}</div>
         <div class="grow">
           <div class="nm">${esc(u.name)}</div>
-          <div class="sub">জমা ${tk(u.deposit)} · খরচ ${tk(u.charge)}${u.refund ? ` · ফেরত ${tk(u.refund)}` : ''}</div>
+          <div class="sub">জমা ${tk(u.deposit)} · খরচ ${tk(u.charge)}${
+            Number(u.pending) ? ` · দেওয়া বাকি ${tk(u.pending)}` : ''}${Number(u.refund) ? ` · ফেরত ${tk(u.refund)}` : ''}</div>
         </div>
-        <b class="amt ${u.balance > 0 ? 'pos' : u.balance < 0 ? 'neg' : ''}">${tk(u.balance)}</b>
+        <b class="amt ${u.now > 0 ? 'pos' : u.now < 0 ? 'neg' : ''}">${tk(u.now)}</b>
         <span class="go">›</span>
       </div>`).join('')}
     </div></div>`, { title: 'টাকার হিসাব', sub: 'জমা / ফেরত' });
 }
 
-function ledgerRow(r) {
-  const map = {
-    deposit: { t: 'জমা', c: 'pos', s: '+' },
-    charge:  { t: 'নাস্তার খরচ', c: 'neg', s: '−' },
-    refund:  { t: 'ফেরত দেওয়া হয়েছে', c: 'neg', s: '−' },
-    adjust:  { t: 'সমন্বয়', c: r.amount >= 0 ? 'pos' : 'neg', s: r.amount >= 0 ? '+' : '' },
-  }[r.type];
-  return `<div class="list-row">
-    <div class="grow">
-      <div class="nm">${map.t}${r.type === 'refund' ? ' ✔' : ''}</div>
-      <div class="sub">${esc(r.created_at.slice(0, 16).replace('T', ' '))}${r.note ? ' · ' + esc(r.note) : ''}</div>
-    </div>
-    <b class="amt ${map.c}">${map.s}${tk(Math.abs(r.amount))}</b>
-    ${isStaff() && r.type !== 'charge' ? `<button class="btn sm danger" data-act="delledger" data-id="${r.id}">✕</button>` : ''}
-  </div>`;
-}
-
-async function userLedgerSheet(id) {
-  const d = await api('/api/ledger/user/' + id);
+/**
+ * একজনের পুরো হিসাব (স্টাফের জন্য) — জমা/ফেরত লেখা, টাকার খাতা আর সব অর্ডার।
+ * ⚠️ ২০০ জমা দিয়ে তিন দিন খেলে "৫০ ফেরত" কোথা থেকে এল, সেটা এখানেই সারি ধরে দেখা যায়।
+ */
+async function userLedgerSheet(id, tab = 'book') {
+  const r = periodRange();
+  const [st, hist] = await Promise.all([
+    api('/api/ledger/statement' + periodQS({ user_id: id })),
+    tab === 'orders' ? api('/api/orders/history' + periodQS({ user_id: id })) : null,
+  ]);
+  const now = Number(st.now);
   sheet({
-    title: esc(d.user.name),
+    title: `${esc(st.user.name)} <small style="font-weight:600;color:var(--muted)">PIN ${bn(st.user.pin || '—')}</small>`,
     body: `
-      <div class="hero ${d.balance > 0 ? 'green' : d.balance < 0 ? 'red' : 'blue'}">
-        <div class="lbl">${d.balance < 0 ? 'পাওনা আছে' : 'এখন জমা আছে'}</div>
-        <div class="val">${tk(Math.abs(d.balance))}</div>
+      <div class="hero ${now > 0 ? 'green' : now < 0 ? 'red' : 'blue'}">
+        <div class="lbl">${now < 0 ? 'পাওনা আছে' : 'এখন জমা আছে'}</div>
+        <div class="val">${tk(Math.abs(now))}</div>
+        ${Number(st.ever.pending) ? `<div class="sub">এর মধ্যে ${tk(st.ever.pending)}-এর নাস্তা এখনো দেওয়া বাকি</div>` : ''}
       </div>
       <div class="row2">
         <div class="field"><label>টাকার অঙ্ক</label>
@@ -987,12 +1117,24 @@ async function userLedgerSheet(id) {
         <button class="btn ok" data-act="ledgeradd" data-id="${id}" data-type="deposit">➕ জমা নিলাম</button>
         <button class="btn danger" data-act="ledgeradd" data-id="${id}" data-type="refund">➖ ফেরত দিলাম</button>
       </div>
-      ${d.balance > 0 ? `<button class="btn dark block" data-act="refundall" data-id="${id}" style="margin-bottom:14px">পুরো ${tk(d.balance)} ফেরত দিয়ে দিলাম</button>` : ''}
-      <div class="section-title">লেনদেন</div>
-      <div class="card"><div class="card-b tight">
-        ${d.rows.length ? d.rows.map(ledgerRow).join('') : `<div class="empty">কিছু নেই</div>`}
-      </div></div>`,
+      ${now > 0 ? `<button class="btn dark block" data-act="refundall" data-id="${id}" style="margin-bottom:14px">পুরো ${tk(now)} ফেরত দিয়ে দিলাম</button>` : ''}
+
+      <div class="tabs2" style="margin-bottom:10px">
+        <button data-act="ledgertab" data-id="${id}" data-tab="book" class="${tab === 'book' ? 'on' : ''}">💰 টাকার খাতা</button>
+        <button data-act="ledgertab" data-id="${id}" data-tab="orders" class="${tab === 'orders' ? 'on' : ''}">🗓️ সব অর্ডার</button>
+      </div>
+      ${periodBar()}
+      ${tab === 'book'
+        ? passbook(st, { canDelete: true })
+        : hist.orders.length
+          ? historySummary(hist) + hist.orders.map(orderCard).join('')
+          : `<div class="empty"><div class="big">🗓️</div>এই সময়ে কোনো অর্ডার নেই</div>`}`,
+    footer: S.ledgerBack === 'money'
+      ? `<button class="btn block" data-act="ledgerback">← আজকের টাকার পাতায় ফিরুন</button>`
+      : `<button class="btn primary block" data-act="closesheet">বুঝেছি</button>`,
   });
+  // sheet() আগে পুরোনো শিট বন্ধ করে (তাতে এটা মুছে যায়), তাই খোলার পরেই মনে রাখা
+  S.ledgerSheet = { id, tab };
 }
 
 // =========================================================== ৪. স্টাফ: আজ
@@ -1383,13 +1525,21 @@ function paintMoneyToday() {
   const d = S.cache.money;
   if (!d || !$('#moneybody')) return;
 
-  const row = (u, kind) => `<div class="person" style="${accent(hashIdx(u.name))}">
+  // "৫০ ফেরত" কোথা থেকে এল সেটা এক লাইনেই: আগে জমা ২০০ → আজ দিলেন → আজকের নাস্তা → এখন ৫০
+  const chain = (u) => {
+    const bits = [];
+    if (Number(u.opening)) bits.push(`আগে জমা ${tk(u.opening)}`);
+    if (Number(u.paid_today)) bits.push(`আজ দিলেন +${tk(u.paid_today)}`);
+    if (Number(u.order_total)) bits.push(`আজ নাস্তা −${tk(u.order_total)}`);
+    if (Number(u.returned_today)) bits.push(`আজ ফেরত −${tk(u.returned_today)}`);
+    return bits.length ? `${bits.join(' · ')} → এখন ${tk(u.to_return)}` : 'আজ অর্ডার নেই';
+  };
+  const row = (u, kind) => `<div class="person" data-act="userledger" data-id="${u.id}" data-back="money"
+      style="cursor:pointer;${accent(hashIdx(u.name))}" title="চাপ দিলে পুরো খাতা">
     <div class="pin">${bn(u.pin || '—')}</div>
     <div style="flex:1;min-width:0">
       <div class="nm">${esc(u.name)}</div>
-      <div class="sub">${Number(u.order_total) ? `নাস্তা ${tk(u.order_total)}` : 'আজ অর্ডার নেই'}${
-        Number(u.paid_today) ? ` · দিয়েছেন ${tk(u.paid_today)}` : ''}${
-        Number(u.returned_today) ? ` · ফেরত ${tk(u.returned_today)}` : ''}</div>
+      <div class="sub">${chain(u)}</div>
     </div>
     ${kind === 'give'
       ? `<button class="btn sm ok" data-act="moneyrefund" data-id="${u.id}" data-amt="${u.to_return}"
@@ -1519,7 +1669,8 @@ function paintPlating() {
                   .map((l) => `<div class="buy-fb">⚙ ${esc(l.item_name)}: ${esc(fbTextOf(l))}</div>`).join('')}
                 ${o.note ? `<div class="buy-fb" style="background:var(--gold-soft);color:var(--gold)">📝 ${esc(o.note)}</div>` : ''}
                 <div class="buy-sub" style="margin-top:4px">দাম ${tk(o.total)}${
-                  S.boot.money_module && Number(o.paid_today) ? ` · হাতে দিয়েছিলেন ${tk(o.paid_today)}` : ''}</div>
+                  S.boot.money_module && Number(o.opening) ? ` · আগে জমা ছিল ${tk(o.opening)}` : ''}${
+                  S.boot.money_module && Number(o.paid_today) ? ` · আজ হাতে দিলেন ${tk(o.paid_today)}` : ''}</div>
                 ${S.boot.money_module && Number(o.to_return) > 0 ? `
                   <button class="btn sm ok" data-act="platerefund" data-id="${o.id}" style="margin-top:6px">
                     💵 ফেরত দিন ${tk(o.to_return)}</button>` : ''}
@@ -1968,13 +2119,31 @@ document.addEventListener('click', async (e) => {
       }
       case 'save': return saveOrder();
       case 'delorder':
-        if (!confirm('আজকের পুরো অর্ডার বাতিল করবেন?')) return;
+        if (!confirm('এই অর্ডারটা বাতিল করবেন?\n\nমুছে যাবে না — ইতিহাসে "বাতিল" হিসেবে থেকে যাবে, আর টাকা কাটা হবে না।')) return;
         await api('/api/orders/' + S.orderMeta.order.id, { method: 'DELETE' });
-        toast('বাতিল হয়েছে', 'ok'); return viewOrder();
+        toast('🚫 বাতিল হয়েছে — ইতিহাসে থেকে যাবে', 'ok'); return viewOrder();
+
+      // সময় বাছাই — ইতিহাস আর টাকার খাতা
+      case 'period':
+        S.period = el.dataset.mode === 'all' ? { mode: 'all' } : { mode: 'month', month: el.dataset.month };
+        return repaintPeriod();
+      case 'ledgertab': return userLedgerSheet(id, el.dataset.tab);
+      case 'ledgerback': S.ledgerBack = null; return moneyTodaySheet();
 
       // দোকান
-      case 'setshop':
-        S.shopId = id; S.dirty = true; return paintOrder();
+      case 'setshop': {
+        S.shopId = id; S.dirty = true;
+        // নতুন দোকানে যা নেই সেগুলো কার্টে লুকিয়ে থাকলে মেনুতে দেখা যেত না, অথচ সেভের
+        // সময় বাদ পড়ত — তাই এখনই সরিয়ে দিয়ে সোজাসুজি জানিয়ে দেওয়া
+        const gone = [];
+        for (const [key, l] of S.cart) {
+          const it = S.items.find((i) => i.id === l.item_id);
+          if (!it || !soldHere(it)) { gone.push(it ? it.name : 'একটা আইটেম'); S.cart.delete(key); }
+        }
+        const shop = S.shops.find((s) => s.id === id);
+        if (gone.length) toast(`${shop?.name || 'এই দোকানে'} নেই, তাই কার্ট থেকে বাদ গেল: ${[...new Set(gone)].join(', ')}`, 'err');
+        return paintOrder();
+      }
       case 'shopedit': return shopEditSheet(id);
       case 'newitemhere': {
         // দোকানের ভেতর থেকেই নতুন জিনিস — নাম, দাম, ক্যাটাগরি দিলেই হয়ে যায়
@@ -2277,7 +2446,10 @@ document.addEventListener('click', async (e) => {
         toast('✅ হয়ে গেছে', 'ok'); return viewToday();
 
       // টাকা
-      case 'userledger': return userLedgerSheet(id);
+      case 'userledger':
+        // টাকার পাতা থেকে এলে সেখানেই ফেরার বোতাম থাকবে
+        S.ledgerBack = el.dataset.back || null;
+        return userLedgerSheet(id);
       case 'ledgeradd': {
         const amt = Number($('#lamt')?.value);
         if (!amt) return toast('টাকার অঙ্ক দিন', 'err');
@@ -2290,8 +2462,12 @@ document.addEventListener('click', async (e) => {
         toast('✅ ফেরত লেখা হয়েছে', 'ok'); closeSheet(); return userLedgerSheet(id);
       case 'delledger': {
         if (!confirm('এই এন্ট্রি মুছে ফেলবেন?')) return;
+        const open = S.ledgerSheet;
         await api('/api/ledger/' + id, { method: 'DELETE' });
-        toast('মোছা হয়েছে', 'ok'); closeSheet(); return viewMoney();
+        toast('মোছা হয়েছে', 'ok');
+        // যার খাতা খোলা ছিল তারটাই আবার খুলুক — তালিকায় ফেরত গিয়ে খুঁজতে না হয়
+        if (open) return userLedgerSheet(open.id, open.tab);
+        closeSheet(); return viewMoney();
       }
 
       // রিপোর্ট
@@ -2384,6 +2560,13 @@ function bumpEverywhere(key, d) {
 }
 
 document.addEventListener('change', async (e) => {
+  // "এই তারিখ থেকে আজ পর্যন্ত" — তারিখ বাছলেই সেই সময়ের হিসাব
+  if (e.target.id === 'psince') {
+    const v = e.target.value;
+    if (!v) return;
+    S.period = v > S.boot.today ? { mode: 'month', month: S.boot.today.slice(0, 7) } : { mode: 'since', from: v };
+    return repaintPeriod();
+  }
   const el = e.target.closest('[data-act="ostatus"]');
   if (!el) return;
   try {
