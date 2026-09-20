@@ -450,7 +450,7 @@ function floorBar() {
   if (!isAdmin()) return '';
   const floors = S.boot.floors || [];
   return `<div class="card"><div class="card-b">
-    <label style="display:block;font-size:13px;font-weight:700;color:var(--ink-2);margin-bottom:8px">কোন তলা দেখবেন?</label>
+    <label class="label-sm">কোন তলা দেখবেন?</label>
     <div class="chip-row">
       <button class="btn sm ${S.floor ? '' : 'primary'}" data-act="setfloor" data-f="">সব তলা</button>
       ${floors.map((f) => `<button class="btn sm ${S.floor === f ? 'primary' : ''}"
@@ -637,7 +637,7 @@ function paintOrder() {
     </div>` : ''}
     ${(S.shops || []).length > 1 ? `
     <div class="card"><div class="card-b">
-      <label style="display:block;font-size:13px;font-weight:700;color:var(--ink-2);margin-bottom:8px">কোথা থেকে আনবেন?</label>
+      <label class="label-sm">কোথা থেকে আনবেন?</label>
       <div class="chip-row">
         ${S.shops.map((s) => `<button class="btn sm ${S.shopId === s.id ? 'primary' : ''}"
           data-act="setshop" data-id="${s.id}" ${locked ? 'disabled' : ''}>🏪 ${esc(s.name)}</button>`).join('')}
@@ -1176,9 +1176,11 @@ async function viewToday() {
       <button class="btn sm" data-act="daynav" data-d="1">→</button>
     </div></div>
 
-    ${st ? `<div class="banner ${st.tone}"><span class="ic">${st.icon}</span>
-      <div>${esc(st.label)}${st.message ? `<small>${esc(st.message)}</small>` : ''}</div></div>` : ''}
+    <!-- আগে এখানে একটা ব্যানারে "🟢 অর্ডার নেওয়া হচ্ছে" লেখা থাকত, আর তার
+         নিচেই বাছা চিপেও ঠিক একই কথা — একই জিনিস দুবার। ব্যানারটা তুলে
+         দেওয়া হলো; কোনটা এখন চালু, সেটা বাছা চিপ দেখেই বোঝা যায়। -->
     <div class="card"><div class="card-b" style="padding:9px 10px">
+      <div class="label-sm">আজ কী অবস্থা — সবাইকে জানিয়ে দিন</div>
       <div class="chip-row">
         ${Object.entries(S.boot.status_options).map(([k, v]) =>
           `<button class="btn sm ${st && st.key === k ? 'primary' : ''}" data-act="setstatus" data-s="${k}"
@@ -1221,21 +1223,24 @@ async function viewToday() {
     ${orders.length ? `
     <div class="section-title">কে কী দিয়েছে — চাপ দিলে বিস্তারিত</div>
     <div class="card"><div class="card-b tight">
-      ${orders.map((o) => `<div class="person" data-act="orderdetail" data-id="${o.id}"
-          style="${accent(hashIdx(o.user_name))}">
+      <!-- বোতামে আর শুধু ⏳/✅ নয়, অবস্থাও আর শুধু রঙিন বিন্দু নয় — দুটোতেই লেখা
+           আছে। ইমোজির মানে শুধু title-এ লেখা থাকলে ফোনে কেউ দেখতেই পায় না,
+           তাই কোনটা চাপলে কী হয় বোঝা যেত না। -->
+      ${orders.map((o) => {
+        const off = o.status === 'cancelled';
+        const st = OSTATUS[o.status] || { t: o.status, c: '' };
+        return `<div class="person ${off ? 'cancelled' : ''}" data-act="orderdetail" data-id="${o.id}">
         <div class="pin">${bn(o.pin || '—')}</div>
         <div style="flex:1;min-width:0">
           <div class="nm">${esc(o.user_name)}</div>
           <div class="sub">${bn(o.lines.reduce((s, l) => s + l.qty, 0))} টি${o.shop_name ? ` · ${esc(o.shop_name)}` : ''}${
-            S.floor || !isAdmin() ? '' : o.user_floor ? ` · ${bn(o.user_floor)}য়` : ''}</div>
+            S.floor || !isAdmin() ? '' : o.user_floor ? ` · ${bn(o.user_floor)}য়` : ''} · ${off ? '🚫 ' : ''}${st.t}</div>
         </div>
         <b class="amt">${tk(o.total)}</b>
-        <button class="btn sm ${o.accepted ? 'ok' : ''}" data-act="accept" data-id="${o.id}"
-          data-v="${o.accepted ? 0 : 1}"
-          title="${o.accepted ? 'গ্রহণ করেছেন — চাপ দিলে ফিরিয়ে নেবে' : 'চাপ দিয়ে গ্রহণ করুন'}"
-          >${o.accepted ? '✅' : '⏳'}</button>
-        <span class="dotmark ${OSTATUS[o.status].c || 'warn'}" title="${OSTATUS[o.status].t}"></span>
-      </div>`).join('')}
+        ${off ? '' : `<button class="btn sm ${o.accepted ? 'ok' : ''}" data-act="accept" data-id="${o.id}"
+          data-v="${o.accepted ? 0 : 1}">${o.accepted ? '✅ গৃহীত' : 'গ্রহণ করুন'}</button>`}
+      </div>`;
+      }).join('')}
     </div></div>
     ${orders.some((o) => !o.accepted && o.status !== 'cancelled')
       ? `<button class="btn block" data-act="acceptall">✅ সবার অর্ডার গ্রহণ করলাম</button>` : ''}

@@ -266,6 +266,12 @@ main { padding: 16px 15px 24px; }
 /* নামের নিচের ছোট বোতামগুলো — "অন্য রকম", "না পেলে কী" */
 .chip-line { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
 
+/* কার্ডের ভেতরের ছোট শিরোনাম — "কোথা থেকে আনবেন?", "আজ কী অবস্থা" */
+.label-sm {
+  display: block; font-size: 13px; font-weight: 700;
+  color: var(--ink-2); margin-bottom: 8px;
+}
+
 /* কার অর্ডার, কোন দোকান, কত টাকা — এক লাইনে। আগে এটা নীল ব্যানার ছিল,
    কিন্তু এটা কোনো খবর বা সতর্কতা নয়, শুধু তথ্য — তাই সাদামাটা লাইনই ঠিক। */
 .who-line {
@@ -753,10 +759,11 @@ table.tbl th, table.tbl td { padding: 7px 6px; }
 }
 .person .nm { font-weight: 600; font-size: 14.5px; }
 .person .sub { font-size: 11.5px; color: var(--muted); }
-.dotmark { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.dotmark.warn { background: var(--warn); }
-.dotmark.info { background: var(--info); }
-.dotmark.ok { background: var(--ok); }
+/* বাতিল অর্ডার তালিকায় থাকে, কিন্তু ফিকে — চোখ চালুগুলোতেই যায় */
+.person.cancelled { opacity: .55; }
+.person.cancelled .amt { text-decoration: line-through; }
+/* .dotmark সরানো হলো — অবস্থা বোঝাতে রঙিন একটা বিন্দু ছিল, কোন রঙে কী মানে
+   কেউ জানত না। এখন সারির নিচের লাইনে অবস্থাটা লেখাই থাকে। */
 
 /* ==========================================================================
    পিসি / ল্যাপটপ (≥ 1000px) — মোবাইলে যা আছে তাই থাকে, এখানে ডেস্কটপের চেহারা:
