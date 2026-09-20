@@ -183,7 +183,7 @@ const S = {
   shopId: null,
   floor: null,          // সুপার অ্যাডমিন কোন তলা দেখছেন (null = সব)
   orderFor: null,       // স্টাফ কারো হয়ে অর্ডার করলে {id, name}
-  usual: null,
+  favs: [],             // প্রিয় নাস্তার তালিকা — [{ id, name, shop_id, lines }]
   notif: [],            // স্টাফের ঘণ্টা — আজকের অর্ডারগুলো
   notifUnseen: 0,
   announced: new Set(), // যাদের অর্ডারের কথা একবার বলা হয়ে গেছে (এই সেশনে আর বলবে না)
@@ -542,12 +542,12 @@ async function viewOrder() {
   S.items = items;
   S.shops = shops;
   S.orderMeta = mine;
-  S.usual = mine.usual || null;
+  S.favs = mine.favourites || [];
   if (!S.orderFor) S.boot.status = mine.status ?? S.boot.status;
 
-  // দোকান: আজকের অর্ডারে যেটা ছিল → নইলে শেষবার যেটা → নইলে রোজকারেরটা → নইলে প্রথমটা
+  // দোকান: আজকের অর্ডারে যেটা ছিল → নইলে শেষবার যেটা → নইলে প্রথম প্রিয়টার → নইলে প্রথমটা
   const has = (id) => shops.some((s) => s.id === id);
-  S.shopId = [mine.order?.shop_id, mine.default_shop_id, mine.usual?.shop_id]
+  S.shopId = [mine.order?.shop_id, mine.default_shop_id, S.favs[0]?.shop_id]
     .find((id) => id != null && has(id)) ?? (shops[0]?.id ?? null);
   // বাছা দোকানের মেনু খালি হলে যেটায় জিনিস আছে সেটাই খুলুক — খালি পাতা দেখিয়ে লাভ নেই
   if (!items.some((it) => soldHere(it, S.shopId))) {
@@ -642,8 +642,7 @@ function paintOrder() {
       </section>`;
   }).join('')}</div>`;
 
-  const usualLines = S.usual?.lines || [];
-  const canQuick = !locked && usualLines.length > 0;
+  const favs = S.favs || [];
 
   // লক আর "গ্রহণ হয়েছে কি না" — একই কথার দুই দিক। দুটো ব্যানার পাশাপাশি বসলে
   // পাতার মাথাটাই ভরে যায়, তাই অর্ডার জমা থাকলে একটাই ব্যানার: অবস্থা উপরে,
@@ -662,24 +661,7 @@ function paintOrder() {
       <small>ইতিহাসে ওটা "বাতিল" হিসেবে থেকে গেছে। চাইলে নিচে থেকে নতুন করে অর্ডার দিন।</small></div></div>` : ''}
     ${accept}
     ${subsNotice()}
-    ${canQuick ? `
-    <!-- আগে পুরো কার্ডটায় কমলা বর্ডার ছিল — নিচের কমলা বোতামটাই তো চোখ টানে,
-         বাক্সটাও রঙিন হলে দুটোতে চোখ ভাগ হয়ে যায় -->
-    <div class="card">
-      <div class="card-b">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-          <span style="font-size:26px">⚡</span>
-          <div style="flex:1">
-            <div style="font-weight:700;font-size:16px">${S.orderFor ? `${esc(S.orderFor.name)}-এর রোজকার` : 'আপনার রোজকার অর্ডার'}</div>
-            <div class="hint" style="margin:0">${esc(usualSummary())}</div>
-          </div>
-        </div>
-        <div class="btn-row">
-          <button class="btn primary" data-act="usualplace">এক চাপে দিয়ে দিন</button>
-          <button class="btn sm" data-act="usualclear">সরান</button>
-        </div>
-      </div>
-    </div>` : ''}
+    ${favCard(favs, locked)}
     ${(S.shops || []).length > 1 ? `
     <div class="card"><div class="card-b">
       <label class="label-sm">কোথা থেকে আনবেন?</label>
@@ -705,8 +687,9 @@ function paintOrder() {
     ${S.orderFor && S.boot.money_module ? `<button class="btn block" data-act="takecash"
       data-id="${S.orderFor.id}" data-name="${esc(S.orderFor.name)}" style="margin-top:10px">
       💵 হাতে টাকা দিলেন? লিখে রাখুন</button>` : ''}
-    <!-- রোজকার অর্ডার সেভ করা আজকের অর্ডার ছোঁয় না, তাই লক থাকলেও এটা চলবে -->
-    ${count > 0 ? `<button class="btn block" data-act="usualsave" style="margin-top:10px">⭐ ${S.orderFor ? `${esc(S.orderFor.name)}-এর রোজকার অর্ডার করে রাখুন` : 'এটাই আমার রোজকার অর্ডার করে রাখুন'}</button>` : ''}
+    <!-- প্রিয় নাস্তা সেভ করা আজকের অর্ডার ছোঁয় না, তাই লক থাকলেও এটা চলবে -->
+    ${count > 0 ? `<button class="btn block" data-act="favsave" style="margin-top:10px">⭐ ${
+      S.orderFor ? `${esc(S.orderFor.name)}-এর প্রিয় নাস্তায় রাখুন` : 'এটা প্রিয় নাস্তায় রাখুন'}</button>` : ''}
     ${S.orderMeta.order && !locked ? `<button class="btn danger block" data-act="delorder" style="margin-top:10px">🚫 এই অর্ডার বাতিল করুন</button>` : ''}
     ${S.orderFor ? `<button class="btn block" data-act="orderforclear" style="margin-top:10px">← আজকের তালিকায় ফিরুন</button>` : ''}
   `, {
@@ -912,8 +895,10 @@ function fbSheet(key) {
   });
 }
 
-function usualSummary() {
-  const out = (S.usual?.lines || []).map((l) => {
+// ------------------------------------------------------------ প্রিয় নাস্তা
+/** "চা (দুধ চা) × ১, সিঙ্গারা × ২" — একটা প্রিয় নাস্তায় কী কী আছে */
+function favSummary(f) {
+  const out = (f?.lines || []).map((l) => {
     const it = S.items.find((i) => i.id === l.item_id);
     if (!it) return null;
     const op = it.options.find((o) => o.id === l.option_id);
@@ -922,10 +907,43 @@ function usualSummary() {
   return out.length ? out.join(', ') : 'কিছু নেই';
 }
 
-/** রোজকার অর্ডারটা কার্টে বসিয়ে দেয় */
-function applyUsual() {
+/** নাম না দিলে জিনিসগুলো থেকেই একটা নাম বানিয়ে দেওয়া হয় */
+function favAutoName(lines) {
+  const names = (lines || []).map((l) => S.items.find((i) => i.id === l.item_id)?.name).filter(Boolean);
+  if (!names.length) return 'প্রিয় নাস্তা';
+  const s = names.slice(0, 2).join('-') + (names.length > 2 ? ` +${bn(names.length - 2)}` : '');
+  return s.length > 40 ? s.slice(0, 40) : s;
+}
+
+/**
+ * প্রিয় নাস্তার কার্ড — পাতার একেবারে উপরে, মেনুর আগেই।
+ *
+ * আগে একজনের একটাই "রোজকার অর্ডার" রাখা যেত, আর কার্ডটা ব্যানারগুলোর নিচে
+ * চাপা পড়ে থাকত বলে চোখেই পড়ত না। এখন যতগুলো (সর্বোচ্চ ৮) প্রিয় নাস্তা
+ * রাখা যায়, প্রতিটার নিজের নাম, আর প্রতিটার পাশে একটাই বোতাম — চাপলেই
+ * ওই অর্ডারটা সাথে সাথে জমা হয়ে যায়।
+ */
+function favCard(favs, locked) {
+  if (!favs.length || locked) return '';
+  return `
+    <div class="section-title">⭐ ${S.orderFor ? `${esc(S.orderFor.name)}-এর প্রিয় নাস্তা` : 'আপনার প্রিয় নাস্তা'}</div>
+    <div class="card"><div class="card-b tight">
+      ${favs.map((f) => `<div class="item fav-row">
+        <div class="info">
+          <div class="nm">${esc(f.name || 'প্রিয় নাস্তা')}</div>
+          <div class="pr">${esc(favSummary(f))}</div>
+        </div>
+        <button class="btn sm primary" data-act="favplace" data-fid="${f.id}">এক চাপে দিন</button>
+        <button class="btn sm" data-act="favdel" data-fid="${f.id}"
+          data-name="${esc(f.name || '')}" title="সরিয়ে দিন">✕</button>
+      </div>`).join('')}
+    </div></div>`;
+}
+
+/** প্রিয় নাস্তাটা কার্টে বসিয়ে দেয় */
+function applyFav(f) {
   S.cart = new Map();
-  for (const l of S.usual?.lines || []) {
+  for (const l of f?.lines || []) {
     if (!S.items.some((i) => i.id === l.item_id)) continue;
     S.cart.set(`${l.item_id}|${l.option_id || 0}`, {
       item_id: l.item_id, option_id: l.option_id || null, qty: l.qty,
@@ -934,8 +952,29 @@ function applyUsual() {
       fallback_note: l.fallback_note || '',
     });
   }
-  if (S.usual?.shop_id && S.shops.some((s) => s.id === S.usual.shop_id)) S.shopId = S.usual.shop_id;
+  if (f?.shop_id && S.shops.some((s) => s.id === f.shop_id)) S.shopId = f.shop_id;
   S.dirty = true;
+}
+
+/** নাম জিজ্ঞেস করার ছোট শিট — native prompt() নয়, ওটা অ্যাপে সাইটের ঠিকানা দেখায় */
+function favSaveSheet() {
+  const lines = [...S.cart.values()];
+  const auto = favAutoName(lines);
+  sheet({
+    title: '⭐ প্রিয় নাস্তায় রাখুন',
+    body: `
+      <div class="field" style="margin-bottom:0">
+        <label>কী নামে রাখব?</label>
+        <input class="input" id="favname" value="${esc(auto)}" maxlength="40" ${RAW_TEXT}
+          placeholder="যেমন: চা-সিঙ্গারা" />
+      </div>
+      <div class="hint">${esc(favSummary({ lines }))}</div>`,
+    footer: `<div class="btn-row">
+      <button class="btn" data-act="closesheet">না, থাক</button>
+      <button class="btn primary" data-act="favsavego">রাখুন</button>
+    </div>`,
+    onOpen: () => setTimeout(() => $('#favname')?.select(), 120),
+  });
 }
 
 async function saveOrder(silent = false) {
@@ -1571,14 +1610,19 @@ function paintQuickList(q) {
     ? `<div class="empty"><div class="big">🔎</div>${q ? 'কাউকে পাওয়া গেল না' : 'এই তলায় এখনো কোনো ইউজার নেই'}</div>`
     : `<div class="card"><div class="card-b tight">
         ${list.map((u) => {
-          const ut = usualTextOf(u.usual);
+          // একজনের একটার বেশি প্রিয় নাস্তা থাকতে পারে — ⚡ বসায় প্রথমটা,
+          // অন্যটা লাগলে নামে চাপ দিয়ে ভেতরে গিয়ে বেছে নিতে হয়
+          const favs = u.favourites || [];
+          const ut = usualTextOf(favs[0]);
           return `<div class="person" data-act="orderforpick" data-id="${u.id}"
-              data-name="${esc(u.name)}" style="${accent(hashIdx(u.name))}">
+              data-name="${esc(u.name)}">
             <div class="pin">${bn(u.pin || '—')}</div>
             <div style="flex:1;min-width:0">
               <div class="nm">${esc(u.name)}
                 ${u.order_id ? `<span class="chip ok">আজ দিয়েছেন · ${bn(u.qty)} টি</span>` : ''}</div>
-              <div class="sub">${ut ? `⚡ ${esc(ut)}` : 'রোজকার অর্ডার সেভ করা নেই'}</div>
+              <div class="sub">${ut
+                ? `⭐ ${esc(favs[0].name || 'প্রিয়')} · ${esc(ut)}${favs.length > 1 ? ` · আরও ${bn(favs.length - 1)}টা` : ''}`
+                : 'প্রিয় নাস্তা সেভ করা নেই'}</div>
               ${S.boot.money_module && Number(u.balance) ? `<div class="sub" style="color:${
                 Number(u.balance) > 0 ? 'var(--ok)' : 'var(--warn)'}">💵 ${
                 Number(u.balance) > 0 ? `জমা আছে ${tk(u.balance)}` : `পাওনা ${tk(-u.balance)}`}</div>` : ''}
@@ -1586,7 +1630,7 @@ function paintQuickList(q) {
             ${S.boot.money_module ? `<button class="btn sm" data-act="takecash" data-id="${u.id}"
               data-name="${esc(u.name)}" title="হাতে টাকা দিলে লিখে রাখুন">💵</button>` : ''}
             ${ut ? `<button class="btn sm primary" data-act="quickplace" data-id="${u.id}"
-              data-name="${esc(u.name)}" title="রোজকার অর্ডারটা বসিয়ে দিন">⚡</button>` : ''}
+              data-name="${esc(u.name)}" title="প্রিয় নাস্তাটা বসিয়ে দিন">⚡</button>` : ''}
             <span class="go">›</span>
           </div>`;
         }).join('')}
@@ -2387,26 +2431,42 @@ document.addEventListener('click', async (e) => {
         await api('/api/shops/' + id, { method: 'DELETE' });
         toast('সরানো হয়েছে', 'ok'); closeSheet(); return viewShops();
 
-      // রোজকার অর্ডার
-      case 'usualplace':
-        applyUsual();
+      // প্রিয় নাস্তা — একজনের একটার বেশি থাকতে পারে
+      case 'favplace': {
+        const f = (S.favs || []).find((x) => x.id === Number(el.dataset.fid));
+        if (!f) return toast('প্রিয় নাস্তাটা আর নেই', 'err');
+        applyFav(f);
         return saveOrder();
-      case 'usualsave': {
-        await api('/api/me/usual', {
-          method: 'PUT',
+      }
+      case 'favsave':
+        if (!S.cart.size) return toast('আগে কিছু বেছে নিন', 'err');
+        return favSaveSheet();
+      case 'favsavego': {
+        const name = ($('#favname')?.value || '').trim();
+        const lines = [...S.cart.values()];
+        await api('/api/me/favourites', {
+          method: 'POST',
           body: {
             user_id: S.orderFor ? S.orderFor.id : undefined,
+            name: name || favAutoName(lines),
             shop_id: S.shopId,
-            lines: [...S.cart.values()],
+            lines,
           },
         });
-        toast('⭐ রোজকার অর্ডার হিসেবে রাখা হলো', 'ok');
-        return viewOrder();
+        toast('⭐ প্রিয় নাস্তায় রাখা হলো', 'ok');
+        closeSheet(); return viewOrder();
       }
-      case 'usualclear':
-        if (!await askConfirm({ title: 'রোজকার অর্ডারটা মুছে ফেলব?', yes: 'মুছে দিন', danger: true })) return;
-        await api('/api/me/usual' + (S.orderFor ? `?user_id=${S.orderFor.id}` : ''), { method: 'DELETE' });
-        toast('মোছা হয়েছে', 'ok'); return viewOrder();
+      case 'favdel': {
+        const nm = el.dataset.name || 'প্রিয় নাস্তা';
+        if (!await askConfirm({
+          title: 'প্রিয় তালিকা থেকে সরিয়ে দেব?',
+          body: `<b>${esc(nm)}</b> — শুধু তালিকা থেকে যাবে, পুরোনো অর্ডারের হিসাব থাকবে।`,
+          yes: 'সরিয়ে দিন', danger: true,
+        })) return;
+        await api(`/api/me/favourites/${Number(el.dataset.fid)}`
+          + (S.orderFor ? `?user_id=${S.orderFor.id}` : ''), { method: 'DELETE' });
+        toast('সরিয়ে দেওয়া হলো', 'ok'); return viewOrder();
+      }
 
       // নোটিফিকেশন
       case 'notif': {
@@ -2500,17 +2560,18 @@ document.addEventListener('click', async (e) => {
       // স্টাফ কারো হয়ে অর্ডার
       case 'orderfor': return orderForSheet();
       case 'quickplace': {
-        // এক ক্লিকেই ওই মানুষের রোজকার অর্ডার বসে যাবে
+        // এক ক্লিকেই ওই মানুষের প্রথম প্রিয় নাস্তাটা বসে যাবে
         e.stopPropagation();
         const u = (S.cache.quick || []).find((x) => x.id === id);
-        if (!u?.usual?.lines?.length) return toast('রোজকার অর্ডার সেভ করা নেই', 'err');
+        const fav = (u?.favourites || [])[0];
+        if (!fav?.lines?.length) return toast('প্রিয় নাস্তা সেভ করা নেই', 'err');
         const r = await api('/api/orders', {
           method: 'POST',
           body: {
             date: S.date,
             user_id: id,
-            shop_id: u.usual.shop_id ?? u.default_shop_id ?? null,
-            lines: u.usual.lines,
+            shop_id: fav.shop_id ?? u.default_shop_id ?? null,
+            lines: fav.lines,
           },
         });
         toast(`✅ ${el.dataset.name}-এর অর্ডার বসে গেছে · ${tk(r.total)}`, 'ok');

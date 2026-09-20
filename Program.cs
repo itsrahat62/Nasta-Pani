@@ -662,26 +662,118 @@ app.MapGet("/api/orders/my", (HttpContext ctx, string? date, int? user_id) =>
         accepted_by_name = acceptedBy,
         for_user = target.id == actor.id ? null : new { target.id, target.name, target.floor },
         default_shop_id = (int?)prof?.default_shop_id,
-        usual = ParseUsual((string?)prof?.usual_json),
+        // favourites = পুরো তালিকা; usual = প্রথমটা, শুধু পুরোনো ক্যাশে থাকা
+        // app.js যেন ভেঙে না পড়ে সেজন্য রাখা হলো
+        favourites = ReadFavs((string?)prof?.usual_json),
+        usual = ReadFavs((string?)prof?.usual_json).FirstOrDefault(),
     });
 });
 
-/// <summary>রোজকার বাঁধা অর্ডার — নষ্ট JSON হলে চুপচাপ খালি ধরা হয়।</summary>
-static object? ParseUsual(string? json)
+/// <summary>
+/// প্রিয় নাস্তা — একজনের একটার বেশি থাকতে পারে ("চা-সিঙ্গারা", "শুধু চা"...)।
+///
+/// `users.usual_json`-এ এখন তালিকা থাকে: <c>{ v: 2, list: [ { id, name, shop_id, lines } ] }</c>।
+/// পুরোনো এক-অর্ডারের শেপ (<c>{ shop_id, lines }</c>) পড়ার সময়ই তালিকায় বদলে
+/// নেওয়া হয়, তাই ডেটাবেজে আলাদা মাইগ্রেশন লাগেনি আর কারো সেভ করা রোজকার
+/// অর্ডারও হারায়নি। নষ্ট JSON হলে চুপচাপ খালি তালিকা।
+/// </summary>
+static List<FavDto> ReadFavs(string? json)
 {
-    if (string.IsNullOrWhiteSpace(json)) return null;
-    try { return JsonSerializer.Deserialize<JsonElement>(json); } catch { return null; }
+    if (string.IsNullOrWhiteSpace(json)) return new();
+    try
+    {
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.TryGetProperty("list", out var l) && l.ValueKind == JsonValueKind.Array)
+        {
+            var list = JsonSerializer.Deserialize<List<FavDto>>(l.GetRawText()) ?? new();
+            return list.Where(f => f.lines is { Count: > 0 }).ToList();
+        }
+        // পুরোনো শেপ — একটাই রোজকার অর্ডার
+        var old = JsonSerializer.Deserialize<FavDto>(json);
+        if (old?.lines is { Count: > 0 })
+            return new() { old with { id = 1, name = "রোজকার অর্ডার" } };
+    }
+    catch { /* নষ্ট JSON — খালি ধরা হয় */ }
+    return new();
 }
 
-/// <summary>রোজকার অর্ডার সেভ। স্টাফ চাইলে নিজের তলার কারো জন্যও সেভ করতে পারেন।</summary>
+static string WriteFavs(List<FavDto> list) => JsonSerializer.Serialize(new { v = 2, list });
+
+/// <summary>এক জায়গায় রাখা হলো, কারণ সীমাটা সার্ভারেই ধরা দরকার।</summary>
+const int MaxFavs = 8;
+
+/// <summary>
+/// প্রিয় নাস্তা যোগ বা বদল। id দিলে ওটাই বদলায় (নাম পাল্টানো সহ), না দিলে
+/// নতুন একটা যোগ হয়। স্টাফ চাইলে নিজের তলার কারো জন্যও রাখতে পারেন।
+/// </summary>
+app.MapPost("/api/me/favourites", (HttpContext ctx, FavReq b) =>
+{
+    var (me, err) = Auth(ctx); if (err is not null) return err;
+    var uid = UsualTarget(me!, b.user_id, out var uErr); if (uErr is not null) return uErr;
+    var lines = b.lines ?? new List<LineDto>();
+    if (lines.Count == 0) return Fail(400, "অন্তত একটা জিনিস বেছে নিন");
+
+    using var c = Db.Open();
+    var list = ReadFavs(c.ExecuteScalar<string?>(
+        "SELECT usual_json FROM dbo.users WHERE id = @i", new { i = uid }));
+
+    var name = (b.name ?? "").Trim();
+    if (name.Length > 40) name = name[..40];
+
+    var at = b.id is int fid ? list.FindIndex(f => f.id == fid) : -1;
+    if (at >= 0)
+    {
+        list[at] = list[at] with
+        {
+            name = name.Length > 0 ? name : list[at].name,
+            shop_id = b.shop_id,
+            lines = lines,
+        };
+    }
+    else
+    {
+        if (list.Count >= MaxFavs)
+            return Fail(400, "সর্বোচ্চ ৮টা প্রিয় নাস্তা রাখা যায় — একটা সরিয়ে তারপর যোগ করুন");
+        var nextId = list.Count == 0 ? 1 : list.Max(f => f.id) + 1;
+        if (name.Length == 0) name = $"প্রিয় {list.Count + 1}";
+        list.Add(new FavDto(nextId, name, b.shop_id, lines));
+    }
+
+    c.Execute("UPDATE dbo.users SET usual_json = @j WHERE id = @i", new { j = WriteFavs(list), i = uid });
+    return Results.Json(new { ok = true, favourites = list });
+});
+
+app.MapDelete("/api/me/favourites/{id:int}", (HttpContext ctx, int id, int? user_id) =>
+{
+    var (me, err) = Auth(ctx); if (err is not null) return err;
+    var uid = UsualTarget(me!, user_id, out var uErr); if (uErr is not null) return uErr;
+    using var c = Db.Open();
+    var list = ReadFavs(c.ExecuteScalar<string?>(
+        "SELECT usual_json FROM dbo.users WHERE id = @i", new { i = uid }));
+    list.RemoveAll(f => f.id == id);
+    c.Execute("UPDATE dbo.users SET usual_json = @j WHERE id = @i",
+        new { j = list.Count == 0 ? null : WriteFavs(list), i = uid });
+    return Results.Json(new { ok = true, favourites = list });
+});
+
+/// <summary>
+/// পুরোনো এন্ডপয়েন্ট — বাদ দেওয়া হয়নি ইচ্ছে করেই। কারো ফোনে পুরোনো app.js
+/// ক্যাশে থেকে গেলে এটা যেন পুরো তালিকা মুছে না ফেলে, তাই এখন এটা শুধু
+/// প্রথম প্রিয়টা বদলায় (বা একটা নতুন যোগ করে)।
+/// </summary>
 app.MapPut("/api/me/usual", (HttpContext ctx, UsualReq b) =>
 {
     var (me, err) = Auth(ctx); if (err is not null) return err;
     var uid = UsualTarget(me!, b.user_id, out var uErr); if (uErr is not null) return uErr;
-    var json = JsonSerializer.Serialize(new { shop_id = b.shop_id, lines = b.lines ?? new List<LineDto>() });
+    var lines = b.lines ?? new List<LineDto>();
+    if (lines.Count == 0) return Fail(400, "অন্তত একটা জিনিস বেছে নিন");
     using var c = Db.Open();
-    c.Execute("UPDATE dbo.users SET usual_json = @j WHERE id = @i", new { j = json, i = uid });
-    return Results.Json(new { ok = true });
+    var list = ReadFavs(c.ExecuteScalar<string?>(
+        "SELECT usual_json FROM dbo.users WHERE id = @i", new { i = uid }));
+    if (list.Count > 0) list[0] = list[0] with { shop_id = b.shop_id, lines = lines };
+    else list.Add(new FavDto(1, "রোজকার অর্ডার", b.shop_id, lines));
+    c.Execute("UPDATE dbo.users SET usual_json = @j WHERE id = @i", new { j = WriteFavs(list), i = uid });
+    return Results.Json(new { ok = true, favourites = list });
 });
 
 app.MapDelete("/api/me/usual", (HttpContext ctx, int? user_id) =>
@@ -1259,7 +1351,9 @@ app.MapGet("/api/quick-users", (HttpContext ctx, string? date, string? floor) =>
 
     foreach (var r in rows)
     {
-        r["usual"] = ParseUsual((string?)r["usual_json"]);
+        var favs = ReadFavs((string?)r["usual_json"]);
+        r["favourites"] = favs;
+        r["usual"] = favs.FirstOrDefault();        // পুরোনো ক্যাশে থাকা app.js-এর জন্য
         r.Remove("usual_json");
         r["balance"] = BalanceOf((int)r["id"]!);   // হাতে কত জমা আছে
     }
@@ -1812,6 +1906,9 @@ record LineDto(int? item_id, int? option_id, int? qty, string? fallback_type, in
     string? fallback_note);
 record OrderReq(string? date, int? user_id, int? shop_id, string? note, List<LineDto>? lines);
 record UsualReq(int? user_id, int? shop_id, List<LineDto>? lines);
+/// <summary>একটা প্রিয় নাস্তা যেভাবে সেভ থাকে — নাম দিয়েই চেনা যায়।</summary>
+record FavDto(int id, string? name, int? shop_id, List<LineDto> lines);
+record FavReq(int? id, string? name, int? user_id, int? shop_id, List<LineDto>? lines);
 record ShopReq(string? name, int? active, int? sort_order);
 record ShopPriceDto(int? item_id, decimal? price, int? available);
 record ShopPricesReq(List<ShopPriceDto>? prices);

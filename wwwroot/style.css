@@ -266,6 +266,10 @@ main { padding: 16px 15px 24px; }
 /* নামের নিচের ছোট বোতামগুলো — "অন্য রকম", "না পেলে কী" */
 .chip-line { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
 
+/* প্রিয় নাস্তার সারি — নাম + কী কী আছে, পাশে "এক চাপে দিন" আর ✕ */
+.fav-row .nm { font-weight: 700; }
+.fav-row .btn.sm { flex-shrink: 0; }
+
 /* কার্ডের ভেতরের ছোট শিরোনাম — "কোথা থেকে আনবেন?", "আজ কী অবস্থা" */
 .label-sm {
   display: block; font-size: 13px; font-weight: 700;
