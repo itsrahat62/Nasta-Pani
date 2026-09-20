@@ -242,6 +242,51 @@ function closeSheet() {
   S.ledgerSheet = null;
 }
 
+/**
+ * নিজের কনফার্ম বাক্স — ব্রাউজারের confirm() নয়।
+ *
+ * কেন: ব্রাউজারের বাক্সটা ইংরেজি OK/Cancel দেখায়, উপরে সাইটের ঠিকানা লিখে
+ * দেয়, আর অ্যান্ড্রয়েড ওয়েবভিউয়ে দেখানোর নিশ্চয়তাও থাকে না — না দেখালে
+ * হয় কাজটা চুপচাপ হয়ে যায়, নয়তো হয়ই না। এটা বাংলা, অ্যাপের মতোই দেখতে,
+ * আর কী বাতিল বা মুছে যাচ্ছে সেটা চোখের সামনে লেখা থাকে।
+ *
+ * নিরাপদ দিকেই ঝোঁক: ফোকাস থাকে "না, থাক"-এ, ব্যাকড্রপে চাপ দিলে বা Esc
+ * দিলেও "না" — ভুল করে এন্টার চেপে কারো অর্ডার বাতিল হয়ে যাবে না।
+ *
+ * body-তে HTML চলে, তাই ইউজারের লেখা কিছু বসালে esc() করে দিতে হবে।
+ * এটা নিজের ওভারলে (#ask), খোলা শিটের উপরে বসে — শিট বন্ধ হয় না।
+ */
+function askConfirm({ title, body = '', yes = 'হ্যাঁ', no = 'না, থাক', danger = false }) {
+  return new Promise((resolve) => {
+    const bg = document.createElement('div');
+    bg.className = 'sheet-bg ask';
+    bg.id = 'ask';
+    bg.innerHTML = `
+      <div class="sheet ask-box" role="dialog" aria-modal="true">
+        <div class="sheet-b">
+          <h3 class="ask-t">${title}</h3>
+          ${body ? `<div class="ask-b">${body}</div>` : ''}
+        </div>
+        <div class="sheet-f"><div class="btn-row">
+          <button class="btn" data-no>${no}</button>
+          <button class="btn ${danger ? 'danger' : 'primary'}" data-yes>${yes}</button>
+        </div></div>
+      </div>`;
+    const done = (v) => {
+      document.removeEventListener('keydown', onKey);
+      bg.remove();
+      resolve(v);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); done(false); } };
+    bg.querySelector('[data-no]').onclick = () => done(false);
+    bg.querySelector('[data-yes]').onclick = () => done(true);
+    bg.addEventListener('click', (e) => { if (e.target === bg) done(false); });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(bg);
+    bg.querySelector('[data-no]').focus();
+  });
+}
+
 // ------------------------------------------------------------------ boot
 async function boot() {
   try {
@@ -943,10 +988,32 @@ function orderCard(o, oi) {
       ${off ? `<div class="item"><div class="info"><div class="pr">এই অর্ডারটা বাতিল করা হয়েছিল — টাকা কাটা হয়নি</div></div></div>` : ''}
       ${!off && isStaff() ? `<div class="item">
         <div class="info"></div>
-        <button class="btn sm danger" data-act="cancelorder" data-id="${o.id}">🚫 বাতিল করুন</button>
+        <button class="btn sm danger" data-act="cancelorder" data-id="${o.id}"
+          data-date="${o.order_date}" data-amt="${o.total}">🚫 বাতিল করুন</button>
       </div>` : ''}
     </div>
   </div>`;
+}
+
+/**
+ * অর্ডার বাতিলের আগে জিজ্ঞেস — কারটা, কোন দিনের, কত টাকার, সেটা লিখে দেখানো
+ * হয়। বাতিল করার সব পথ এই একটাই বাক্স ব্যবহার করে, যাতে কোথাও কথাটা আলাদা
+ * না হয় আর কোথাও জিজ্ঞেস করতে ভুলে না যায়।
+ */
+function askCancelOrder({ who, date, total }) {
+  const bits = [
+    who ? `<b>${esc(who)}</b>` : null,
+    date ? esc(niceDate(date)) : null,
+    total != null && total !== '' ? `<b>${tk(total)}</b>` : null,
+  ].filter(Boolean);
+  return askConfirm({
+    title: 'অর্ডারটা বাতিল করবেন?',
+    body: (bits.length ? `${bits.join(' · ')}<br>` : '')
+      + 'মুছে যাবে না — ইতিহাসে "বাতিল" হিসেবে থেকে যাবে, আর টাকাও কাটা হবে না।',
+    yes: '🚫 হ্যাঁ, বাতিল',
+    no: 'না, থাক',
+    danger: true,
+  });
 }
 
 /** এক সময়ের অর্ডারগুলোর সারাংশ — কত দিন, কত টাকা */
@@ -1353,7 +1420,8 @@ function orderDetailSheet(orderId) {
       : `<div class="btn-row" style="margin-bottom:8px">
       <button class="btn ${o.accepted ? '' : 'ok'}" data-act="accept" data-id="${o.id}"
         data-v="${o.accepted ? 0 : 1}">${o.accepted ? '↩ গ্রহণ ফিরিয়ে নিন' : '✅ গ্রহণ করলাম'}</button>
-      <button class="btn danger" data-act="cancelorder" data-id="${o.id}">🚫 অর্ডার বাতিল</button>
+      <button class="btn danger" data-act="cancelorder" data-id="${o.id}"
+        data-who="${esc(o.user_name)}" data-date="${S.date}" data-amt="${o.total}">🚫 অর্ডার বাতিল</button>
     </div>
     <div class="btn-row">
       <button class="btn" data-act="orderforpick" data-id="${o.user_id}" data-name="${esc(o.user_name)}">✏️ বদলান</button>
@@ -2146,7 +2214,11 @@ document.addEventListener('click', async (e) => {
       case 'closesheet': return closeSheet();
       case 'tab':
         closeSheet();
-        if (S.dirty && S.tab === 'order' && !confirm('অর্ডার সেভ করা হয়নি — বাদ দেবেন?')) return;
+        if (S.dirty && S.tab === 'order' && !await askConfirm({
+          title: 'অর্ডার সেভ করা হয়নি',
+          body: 'এখন সরে গেলে যা বেছেছেন সেটা থাকবে না।',
+          yes: 'বাদ দিন', no: 'এখানেই থাকি', danger: true,
+        })) return;
         S.dirty = false; S.tab = el.dataset.k; return render();
 
       // অর্ডার
@@ -2166,17 +2238,35 @@ document.addEventListener('click', async (e) => {
         closeSheet(); return paintOrder();
       }
       case 'save': return saveOrder();
-      case 'delorder':
-        if (!confirm('এই অর্ডারটা বাতিল করবেন?\n\nমুছে যাবে না — ইতিহাসে "বাতিল" হিসেবে থেকে যাবে, আর টাকা কাটা হবে না।')) return;
-        await api('/api/orders/' + S.orderMeta.order.id, { method: 'DELETE' });
-        toast('🚫 বাতিল হয়েছে — ইতিহাসে থেকে যাবে', 'ok'); return viewOrder();
+      case 'delorder': {
+        const o = S.orderMeta.order;
+        if (!await askCancelOrder({
+          who: S.orderFor ? S.orderFor.name : null,
+          date: S.orderMeta.date, total: o.total,
+        })) return;
+        await api('/api/orders/' + o.id, { method: 'DELETE' });
+        toast('🚫 বাতিল হয়েছে — ইতিহাসে থেকে যাবে', 'ok');
+        return viewOrder();
+      }
 
-      // ইতিহাসের যেকোনো অর্ডার কার্ড থেকে বাতিল — স্টাফ নিজের তলার, অ্যাডমিন সবার।
-      // আগে বাতিল করার একটাই পথ ছিল: ওই দিনের তারিখ বেছে, ওই ব্যক্তির অর্ডার পাতায়
-      // গিয়ে। পুরোনো বা অন্য তলার অর্ডার বাতিল করা কঠিন হয়ে যেত।
+      // ইতিহাসের যেকোনো অর্ডার কার্ড আর অর্ডারের শিট থেকে বাতিল — স্টাফ নিজের
+      // তলার, অ্যাডমিন সবার। আগে বাতিলের একটাই পথ ছিল: ওই দিনের তারিখ বেছে,
+      // ওই ব্যক্তির অর্ডার পাতায় গিয়ে। পুরোনো বা অন্য তলার অর্ডার বাতিল করা
+      // কঠিন হয়ে যেত।
       case 'cancelorder': {
-        if (!confirm('এই অর্ডারটা বাতিল করবেন?\n\nমুছে যাবে না — ইতিহাসে "বাতিল" হিসেবে থেকে যাবে, আর টাকা কাটা হবে না।')) return;
-        await api('/api/orders/' + id, { method: 'DELETE' });
+        if (!await askCancelOrder({
+          who: el.dataset.who || null,
+          date: el.dataset.date || null,
+          total: el.dataset.amt,
+        })) return;
+        // দুবার চাপ পড়লে দুটো রিকোয়েস্ট যায় না
+        el.disabled = true;
+        try {
+          await api('/api/orders/' + id, { method: 'DELETE' });
+        } catch (err) {
+          el.disabled = false;
+          throw err;
+        }
         toast('🚫 বাতিল হয়েছে — ইতিহাসে থেকে যাবে', 'ok');
         // যে শিট বা পাতা খোলা ছিল সেটাই নতুন করে আঁকা, যাতে "বাতিল" লেখাটা দেখা যায়।
         // closeSheet() S.ledgerSheet খালি করে দেয়, তাই আগেই মনে রাখা হলো।
@@ -2289,7 +2379,11 @@ document.addEventListener('click', async (e) => {
         return;
       }
       case 'shopdel':
-        if (!confirm('দোকানটা সরিয়ে দেব? (পুরোনো অর্ডারের হিসাব থাকবে)')) return;
+        if (!await askConfirm({
+          title: 'দোকানটা সরিয়ে দেব?',
+          body: 'পুরোনো অর্ডারের হিসাব সব থেকে যাবে।',
+          yes: 'সরিয়ে দিন', danger: true,
+        })) return;
         await api('/api/shops/' + id, { method: 'DELETE' });
         toast('সরানো হয়েছে', 'ok'); closeSheet(); return viewShops();
 
@@ -2310,7 +2404,7 @@ document.addEventListener('click', async (e) => {
         return viewOrder();
       }
       case 'usualclear':
-        if (!confirm('রোজকার অর্ডারটা মুছে ফেলব?')) return;
+        if (!await askConfirm({ title: 'রোজকার অর্ডারটা মুছে ফেলব?', yes: 'মুছে দিন', danger: true })) return;
         await api('/api/me/usual' + (S.orderFor ? `?user_id=${S.orderFor.id}` : ''), { method: 'DELETE' });
         toast('মোছা হয়েছে', 'ok'); return viewOrder();
 
@@ -2370,7 +2464,11 @@ document.addEventListener('click', async (e) => {
       case 'moneyrefund': {
         const amt = Number(el.dataset.amt);
         if (!(amt > 0)) return toast('ফেরত দেওয়ার মতো টাকা নেই', 'err');
-        if (!confirm(`${el.dataset.name}-কে ${tk(amt)} ফেরত দিলেন?`)) return;
+        if (!await askConfirm({
+          title: 'ফেরত দেওয়ার কথা লিখে রাখব?',
+          body: `<b>${esc(el.dataset.name)}</b>-কে <b>${tk(amt)}</b> ফেরত দিয়েছেন।`,
+          yes: 'হ্যাঁ, লিখুন',
+        })) return;
         await api('/api/ledger', {
           method: 'POST',
           body: { user_id: id, type: 'refund', amount: amt, note: `${S.date} — নাস্তা দেওয়ার সময় ফেরত` },
@@ -2384,7 +2482,11 @@ document.addEventListener('click', async (e) => {
         if (!o) return;
         const amt = Number(o.to_return);
         if (amt <= 0) return toast('ফেরত দেওয়ার মতো টাকা নেই', 'err');
-        if (!confirm(`${o.user_name}-কে ${tk(amt)} ফেরত দিলেন?`)) return;
+        if (!await askConfirm({
+          title: 'ফেরত দেওয়ার কথা লিখে রাখব?',
+          body: `<b>${esc(o.user_name)}</b>-কে <b>${tk(amt)}</b> ফেরত দিয়েছেন।`,
+          yes: 'হ্যাঁ, লিখুন',
+        })) return;
         await api('/api/ledger', {
           method: 'POST',
           body: { user_id: o.user_id, type: 'refund', amount: amt, note: `${S.date} — নাস্তা দেওয়ার সময় ফেরত` },
@@ -2469,7 +2571,11 @@ document.addEventListener('click', async (e) => {
       case 'acceptall': {
         const left = (S.cache.orders || []).filter((o) => !o.accepted && o.status !== 'cancelled');
         if (!left.length) return toast('সব অর্ডারই গ্রহণ করা আছে', 'ok');
-        if (!confirm(`${bn(left.length)} টি অর্ডার গ্রহণ করে নেবেন?`)) return;
+        if (!await askConfirm({
+          title: `${bn(left.length)} টি অর্ডার গ্রহণ করে নেবেন?`,
+          body: 'যাঁরা অর্ডার দিয়েছেন, সবাই সাথে সাথেই "গৃহীত" দেখতে পাবেন।',
+          yes: '✅ গ্রহণ করলাম',
+        })) return;
         for (const o of left) await api(`/api/orders/${o.id}/accept`, { method: 'PATCH', body: { accepted: true } });
         toast(`✅ ${bn(left.length)} টি অর্ডার গ্রহণ করা হলো`, 'ok');
         return viewToday();
@@ -2514,7 +2620,11 @@ document.addEventListener('click', async (e) => {
       case 'buylist': return buyListSheet(el.dataset.tab || 'buy');
       case 'printsheet': return window.print();
       case 'deliverall':
-        if (!confirm('সবার অর্ডার "দেওয়া হয়েছে" করে দেবেন?')) return;
+        if (!await askConfirm({
+          title: 'সবাইকে দিয়ে দিয়েছেন?',
+          body: 'সবার অর্ডার "দেওয়া হয়েছে" হয়ে যাবে, আর তখনই টাকাটা হিসাবে বসবে।',
+          yes: '✅ হ্যাঁ, দিয়েছি',
+        })) return;
         await api('/api/orders/deliver-all', { method: 'POST', body: { date: S.date, floor: S.floor } });
         toast('✅ হয়ে গেছে', 'ok'); return viewToday();
 
@@ -2530,11 +2640,19 @@ document.addEventListener('click', async (e) => {
         toast('✅ হয়েছে', 'ok'); closeSheet(); return userLedgerSheet(id);
       }
       case 'refundall':
-        if (!confirm('পুরো ব্যালেন্স ফেরত দেওয়া হয়েছে বলে লিখব?')) return;
+        if (!await askConfirm({
+          title: 'পুরো জমা ফেরত দিয়েছেন?',
+          body: 'যাঁদের টাকা জমা আছে, সবার খাতায় ফেরতের এন্ট্রি বসে যাবে।',
+          yes: 'হ্যাঁ, লিখুন', danger: true,
+        })) return;
         await api('/api/ledger/refund-all', { method: 'POST', body: { user_id: id } });
         toast('✅ ফেরত লেখা হয়েছে', 'ok'); closeSheet(); return userLedgerSheet(id);
       case 'delledger': {
-        if (!confirm('এই এন্ট্রি মুছে ফেলবেন?')) return;
+        if (!await askConfirm({
+          title: 'এই এন্ট্রি মুছে ফেলবেন?',
+          body: 'টাকার খাতা থেকে একেবারে মুছে যাবে — ফেরানো যাবে না।',
+          yes: 'মুছে দিন', danger: true,
+        })) return;
         const open = S.ledgerSheet;
         await api('/api/ledger/' + id, { method: 'DELETE' });
         toast('মোছা হয়েছে', 'ok');
@@ -2575,7 +2693,11 @@ document.addEventListener('click', async (e) => {
         toast('✅ সেভ হয়েছে', 'ok'); closeSheet(); return viewItems();
       }
       case 'itemdel':
-        if (!confirm('মেনু থেকে সরিয়ে দেব? (পুরোনো অর্ডারের হিসাব থাকবে)')) return;
+        if (!await askConfirm({
+          title: 'মেনু থেকে সরিয়ে দেব?',
+          body: 'পুরোনো অর্ডারের হিসাব সব থেকে যাবে।',
+          yes: 'সরিয়ে দিন', danger: true,
+        })) return;
         await api('/api/items/' + id, { method: 'DELETE' });
         toast('সরানো হয়েছে', 'ok'); closeSheet(); return viewItems();
 
@@ -2602,11 +2724,18 @@ document.addEventListener('click', async (e) => {
       case 'userdel': {
         const nm = el.dataset.name || 'ইউজার';
         // মোছা মানে একেবারে মোছা — তাই দুবার জিজ্ঞেস করা হয়
-        if (!confirm(`${nm}-কে একেবারে মুছে ফেলবেন?\n\n` +
-          `তাঁর সব অর্ডার আর টাকার হিসাবও মুছে যাবে — পুরোনো রিপোর্টেও আর থাকবে না। ` +
-          `এটা আর ফেরানো যাবে না।\n\nশুধু ঢোকা বন্ধ করতে চাইলে "মুছুন" নয় — ` +
-          `"অ্যাকাউন্ট চালু"-র টিক তুলে দিন।`)) return;
-        if (!confirm(`শেষবার — ${nm} ও তাঁর সব হিসাব মুছে যাবে। নিশ্চিত?`)) return;
+        if (!await askConfirm({
+          title: `${esc(nm)}-কে একেবারে মুছে ফেলবেন?`,
+          body: 'তাঁর সব অর্ডার আর টাকার হিসাবও মুছে যাবে — পুরোনো রিপোর্টেও আর থাকবে না। '
+            + 'এটা আর ফেরানো যাবে না।<br><br>শুধু ঢোকা বন্ধ করতে চাইলে মুছবেন না — '
+            + '<b>"অ্যাকাউন্ট চালু"</b>-র টিক তুলে দিন।',
+          yes: '🗑️ মুছে ফেলব', danger: true,
+        })) return;
+        if (!await askConfirm({
+          title: 'শেষবার জিজ্ঞেস করছি',
+          body: `<b>${esc(nm)}</b> ও তাঁর সব হিসাব মুছে যাবে। নিশ্চিত?`,
+          yes: 'হ্যাঁ, মুছে দিন', no: 'না, থাক', danger: true,
+        })) return;
         await api('/api/users/' + id, { method: 'DELETE' });
         toast(`🗑️ ${nm} মুছে ফেলা হলো`, 'ok');
         closeSheet(); return viewUsers();
@@ -2615,10 +2744,15 @@ document.addEventListener('click', async (e) => {
       // আরও
       case 'install':
         if (window.deferredPrompt) { window.deferredPrompt.prompt(); window.deferredPrompt = null; }
-        else alert('ব্রাউজারের মেনু (⋮) খুলে "Add to Home screen" / "হোম স্ক্রিনে যোগ করুন" চাপুন।');
+        // alert() নয় — ওটাও অ্যাপে সাইটের ঠিকানা লিখে দেখায়
+        else await askConfirm({
+          title: 'হোম স্ক্রিনে যোগ করবেন?',
+          body: 'ব্রাউজারের মেনু (⋮) খুলে <b>"Add to Home screen"</b> / <b>"হোম স্ক্রিনে যোগ করুন"</b> চাপুন।',
+          yes: 'বুঝেছি', no: 'বন্ধ করুন',
+        });
         return;
       case 'logout':
-        if (!confirm('লগআউট করবেন?')) return;
+        if (!await askConfirm({ title: 'লগআউট করবেন?', yes: '🚪 হ্যাঁ, বেরোই' })) return;
         await api('/api/logout', { method: 'POST' });
         S.tab = 'order'; return boot();
     }

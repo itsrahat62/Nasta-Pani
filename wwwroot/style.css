@@ -445,6 +445,24 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--brand); width:
 .sheet-f { padding: 13px 16px 18px; border-top: 1px solid var(--line); background: var(--card); }
 .grabber { width: 42px; height: 5px; border-radius: 99px; background: rgba(255, 255, 255, .55); margin: 9px auto 0; }
 
+/* ------------------------------------------- নিজের কনফার্ম বাক্স (askConfirm) */
+/* নিচ থেকে ওঠা শিট নয় — ছোট একটা বাক্স, মাঝখানে, খোলা শিটেরও উপরে।
+   জিজ্ঞেস করা জিনিসটা যেন চোখ এড়িয়ে না যায়। */
+.sheet-bg.ask { align-items: center; padding: 22px; z-index: 120; }
+.ask-box {
+  max-width: 380px; border-radius: 22px; max-height: 80dvh;
+  animation: pop .18s cubic-bezier(.2, 1.2, .4, 1);
+}
+.ask-box .sheet-b { padding: 20px 20px 16px; }
+.ask-t { margin: 0; font-size: 17.5px; font-weight: 700; line-height: 1.4; }
+.ask-b { margin-top: 8px; font-size: 13.5px; color: var(--muted); line-height: 1.6; }
+.ask-b b { color: var(--ink); }
+/* পিসিতেও এটা ভাসমান বাক্সই থাকে — শিটের মতো পাতার ভেতরে বসে যায় না */
+@media (min-width: 1000px) {
+  .sheet-bg.ask { position: fixed; background: rgba(24, 12, 30, .55); backdrop-filter: blur(3px); }
+  .ask-box { max-height: 80dvh; box-shadow: var(--shadow-lg); }
+}
+
 /* ------------------------------------------- বাজারের লিস্ট (shopping list) */
 .buy-row {
   display: flex; align-items: flex-start; gap: 13px;
