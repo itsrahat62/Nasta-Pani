@@ -350,26 +350,23 @@ function renderAuth() {
       <form id="authform" class="card"><div class="card-b">
         ${t === 'reg' ? `
         <div class="field">
-          <label>আপনার নাম (অফিসের ডাকনাম)</label>
+          <label>আপনার নাম</label>
           <input class="input" name="name" autocomplete="name" ${RAW_TEXT}
-            placeholder="অফিসে আপনাকে যে নামে ডাকে — যেমন: রাহাত ভাই" required />
-          <div class="hint">অফিসে সবাই আপনাকে যে নামে চেনে সেটাই দিন — স্টাফ এই নাম দেখেই নাস্তা বুঝিয়ে দেবেন।</div>
+            placeholder="যেমন: রাহাত ভাই" required />
         </div>` : ''}
         <div class="field">
           <label>${t === 'reg' ? 'আপনার PIN' : 'PIN'}</label>
           <input class="input" name="pin" ${t === 'reg' ? 'inputmode="numeric" pattern="[0-9]*" maxlength="6"' : ''}
             autocomplete="username" placeholder="${t === 'reg' ? '১–৬ সংখ্যার নিজের একটা PIN' : 'যেমন: 4800'}" required />
-          ${t === 'reg' ? `<div class="hint">এই PIN শুধু আপনার — এটা আর পাসওয়ার্ড দিয়েই পরে ঢুকবেন। আরেকজনের PIN-এর সাথে মিলতে পারবে না।</div>` : ''}
         </div>
         ${t === 'reg' ? `
         <div class="field">
-          <label>আপনি কোন তলায় বসেন?</label>
+          <label>কোন তলায় বসেন?</label>
           <div class="chip-row" id="floorpick">
             ${(S.boot.floors || [2, 3, 4, 5]).map((f, i) => `<button type="button" class="btn sm ${i === 0 ? 'primary' : ''}"
               data-floor="${f}">${bn(f)}য় তলা</button>`).join('')}
           </div>
           <input type="hidden" name="floor" value="${(S.boot.floors || [2])[0]}" />
-          <div class="hint">আপনার তলার স্টাফের কাছেই আপনার অর্ডার যাবে। এক তলার কিছু অন্য তলার কেউ দেখতে পাবে না।</div>
         </div>` : ''}
         <div class="field">
           <label>পাসওয়ার্ড</label>
@@ -645,7 +642,6 @@ function paintOrder() {
         ${S.shops.map((s) => `<button class="btn sm ${S.shopId === s.id ? 'primary' : ''}"
           data-act="setshop" data-id="${s.id}" ${locked ? 'disabled' : ''}>🏪 ${esc(s.name)}</button>`).join('')}
       </div>
-      ${locked ? '' : `<div class="hint">একেক দোকানে একেক রকম দাম।</div>`}
     </div></div>` : ''}
     ${body}
     <div class="card"><div class="card-b">
@@ -838,7 +834,6 @@ function fbSheet(key) {
   sheet({
     title: `${esc(it.name)} না থাকলে?`,
     body: `
-      <p class="hint" style="margin-top:0">দোকানে এই আইটেম না পেলে স্টাফ কী করবে সেটা এখানেই বলে দিন।</p>
       <div class="card"><div class="card-b tight">
         ${[
           ['skip', '🚫', 'না পেলে নেব না', 'টাকাও কাটা যাবে না'],
@@ -969,8 +964,7 @@ async function viewHistory() {
     ${periodBar()}
     ${h.orders.length ? historySummary(h) : ''}
     ${h.orders.length === 0
-      ? `<div class="empty"><div class="big">🗓️</div>এই সময়ে কোনো অর্ডার নেই
-          <div class="hint" style="margin-top:8px">(${esc(r.label)}) — উপরে অন্য মাস বা "সব" বেছে দেখুন।</div></div>`
+      ? `<div class="empty"><div class="big">🗓️</div>এই সময়ে কোনো অর্ডার নেই</div>`
       : `<div class="menu-grid">${h.orders.map(orderCard).join('')}</div>`}`,
     { title: 'আমার অর্ডার', sub: r.label });
 }
@@ -1285,8 +1279,7 @@ function liveTotals(orders) {
 function availSheet() {
   sheet({
     title: '🚫 আজ কী নেই',
-    body: `<p class="hint" style="margin-top:0">যেটা আজ পাওয়া যাবে না সেটায় চাপ দিন — ইউজারের মেনুতে "আজ নেই" লেখা উঠবে।</p>
-      <div class="card"><div class="card-b chip-row">
+    body: `      <div class="card"><div class="card-b chip-row">
         ${S.items.filter((i) => i.active).map((i) =>
           `<button class="btn sm ${i.available ? '' : 'danger'}" data-act="avail" data-id="${i.id}"
             data-v="${i.available ? 0 : 1}">${i.available ? emojiFor(i.name) + ' ' : '🚫 '}${esc(i.name)}</button>`).join('')}
@@ -1389,8 +1382,7 @@ function subSheet(lineId) {
       <div class="field"><label>বাড়তি কথা (ইচ্ছা হলে)</label>
         <input class="input" id="sb_note" value="${esc(line.sub_note || '')}"
           placeholder="যেমন: সিঙ্গারা শেষ হয়ে গিয়েছিল" /></div>
-      <div class="hint">মূল ${esc(line.item_name)}-এর ${tk(line.subtotal)} বাদ যাবে, বদলিটার দামই বসবে।
-        কিছুই না আনলে নাম-দাম খালি রাখুন — তখন ০ টাকা ধরা হবে।</div>`,
+      <div class="hint">কিছুই না আনলে ঘরগুলো খালি রাখুন — ০ টাকা ধরা হবে।</div>`,
     footer: `<div class="btn-row">
       ${line.missing ? `<button class="btn" data-act="subclear" data-id="${line.id}">↩ আসলে পাওয়া গেছে</button>` : ''}
       <button class="btn primary" data-act="subsave" data-id="${line.id}">বসিয়ে দিন</button>
@@ -1422,8 +1414,7 @@ function takeCashSheet(userId, name, back = '') {
       </div>
       <div class="field" style="margin:0"><label>অন্য অঙ্ক</label>
         <input class="input" id="cashamt" type="number" inputmode="decimal" placeholder="যেমন ৩৫০" /></div>
-      <div class="hint">৫০ টাকার নাস্তায় কেউ ১০০ দিলে পুরো ১০০-ই লিখুন —
-        নাস্তা দেওয়ার সময় বাকি ৫০ ফেরতের হিসাব নিজে থেকেই দেখাবে।</div>`,
+      <div class="hint">হাতে যত টাকা দিলেন, পুরোটাই লিখুন।</div>`,
     footer: `<button class="btn primary block" data-act="cashnow" data-id="${userId}"
       data-back="${back}" data-name="${esc(name)}">লিখে রাখুন</button>`,
     onOpen: () => setTimeout(() => $('#cashamt')?.focus(), 120),
@@ -1496,8 +1487,7 @@ function paintQuickList(q) {
           </div>`;
         }).join('')}
       </div></div>
-      <p class="hint center">⚡ চাপলেই তার রোজকার অর্ডার বসে যাবে।<br>
-        অন্য কিছু চাইলে নামে চাপ দিয়ে সাজিয়ে দিন।</p>`;
+`;
 }
 
 /** পপআপের তিন ট্যাব — কিনতে হবে / কে কী পাবে / আজকের টাকা */
@@ -1863,8 +1853,6 @@ async function viewShops() {
           </div>`;
         }).join('')}
       </div></div>`}
-    <p class="hint center">প্রতিটা দোকানের নিজের মেনু — যে জিনিসের দাম বসাবেন, শুধু সেটাই ওই দোকানে দেখাবে।<br>
-      একই জিনিসের একেক দোকানে একেক দাম দিতে পারবেন।</p>
   `, { title: 'দোকান ও দাম' });
 }
 
@@ -1927,11 +1915,8 @@ function shopEditSheet(id) {
       ${id ? `<label class="check"><input type="checkbox" id="s_active" ${s.active ? 'checked' : ''} /> দোকানটা চালু আছে</label>
       <button class="btn block" data-act="newitemhere" data-id="${id}" style="margin-bottom:12px">
         + এই দোকানের নতুন আইটেম (দামসহ)</button>
-      ${priceList(s, items)}
-      <div class="hint"><b>দাম বসানো = এই দোকানে পাওয়া যায়।</b> ঘর খালি রাখলে বা ০ দিলে
-        এই দোকান বাছলে জিনিসটা মেনুতেই দেখাবে না — ইউজার আর স্টাফ দুজনের কাছেই।</div>`
-      : `<div class="hint">দোকানটা সেভ করার পর ঠিক করবেন এখানে কী কী পাওয়া যায় আর কত দাম।
-          <b>নতুন দোকান খালি দিয়েই শুরু হয়</b> — যা যা যোগ করবেন, শুধু সেগুলোই দেখাবে।</div>`}`,
+      ${priceList(s, items)}`
+      : `<div class="hint">দোকানটা সেভ করার পর ঠিক করবেন এখানে কী কী পাওয়া যায় আর কত দাম।</div>`}`,
     footer: `<div class="btn-row">
       ${id ? `<button class="btn danger" data-act="shopdel" data-id="${id}">মুছুন</button>` : ''}
       <button class="btn primary" data-act="shopsave" data-id="${id}">সেভ</button>
@@ -1990,8 +1975,6 @@ function itemEditSheet(id) {
         ${liveShops().length === 0
           ? `<div class="empty">আগে একটা দোকান যোগ করুন</div>` : ''}
       </div></div>
-      <div class="hint" style="margin-bottom:12px">যে দোকানে দাম বসাবেন, শুধু ওই দোকানেই জিনিসটা দেখাবে।
-        ঘর খালি রাখলে ওই দোকানে নেই।</div>
       <div class="row2">
         <label class="check"><input type="checkbox" id="i_avail" ${it.available ? 'checked' : ''} /> আজ পাওয়া যাচ্ছে</label>
         <label class="check"><input type="checkbox" id="i_active" ${it.active ? 'checked' : ''} /> মেনুতে দেখাবে</label>
@@ -1999,10 +1982,7 @@ function itemEditSheet(id) {
       <div class="section-title" style="margin-left:0">রকম (যেমন পরোটা → তেল দিয়ে / তেল ছাড়া)</div>
       <div id="optlist">${it.options.map(optRow).join('')}</div>
       <button class="btn sm" data-act="addoptrow">+ রকম যোগ</button>
-      <div class="hint">
-        ⭐ দেওয়া রকমটাই <b>ডিফল্ট</b> — কেউ কিছু না বাছলে ওটাই ধরা হবে (যেমন পরোটা → তেল দিয়ে)।<br>
-        দাম বাড়লে/কমলে "+/− টাকা" ঘরে লিখুন (যেমন ওমলেট = +৫)। রকম না দিলে আইটেমটা সরাসরি অর্ডার হবে।
-      </div>`,
+      <div class="hint">⭐ দেওয়া রকমটাই ডিফল্ট · দাম বাড়লে-কমলে "+/− টাকা" ঘরে লিখুন।</div>`,
     footer: `<div class="btn-row">
       ${id ? `<button class="btn danger" data-act="itemdel" data-id="${id}">মুছুন</button>` : ''}
       <button class="btn primary" data-act="itemsave" data-id="${id}">সেভ</button></div>`,
@@ -2042,8 +2022,7 @@ async function viewUsers() {
         </div>`).join('')}
       </div></div></section>`;
     }).join('')}
-    <p class="hint center">এক নামে দুজন থাকতে পারেন — চেনার জন্য <b>PIN</b> আলাদা, দুজনের কখনো এক হবে না।<br>
-      নতুন কেউ নিজে থেকেও রেজিস্ট্রেশন করতে পারবেন (সেটিংস থেকে বন্ধ করা যায়)।</p>`,
+`,
     { title: 'ইউজার ও স্টাফ', back: 'more' });
   S.cache.users = users;
 }
@@ -2054,8 +2033,7 @@ function userEditSheet(id) {
     title: id ? esc(u.name) : 'নতুন ইউজার',
     body: `
       <div class="field"><label>নাম</label>
-        <input class="input" id="u_name" value="${esc(u.name)}" ${RAW_TEXT} autocomplete="off" />
-        <div class="hint">যা লিখবেন হুবহু তাই সেভ হবে। এক নামে দুজন থাকতে পারেন — PIN আলাদা হলেই হলো।</div></div>
+        <input class="input" id="u_name" value="${esc(u.name)}" ${RAW_TEXT} autocomplete="off" /></div>
       <div class="row2">
         <div class="field"><label>PIN</label>
           <input class="input" id="u_pin" inputmode="numeric" maxlength="6" value="${esc(u.pin || '')}"
@@ -2069,15 +2047,12 @@ function userEditSheet(id) {
         <select class="input" id="u_role">
           ${Object.entries(ROLE_BN).map(([k, t]) => `<option value="${k}" ${u.role === k ? 'selected' : ''}>${t}</option>`).join('')}
         </select>
-        <div class="hint">স্টাফ = নিজের তলার অর্ডার, বাজারের লিস্ট, টাকার হিসাব, অবস্থা জানানো, আইটেম ও দাম।<br>
-          সুপার অ্যাডমিন = সব তলা, সব কিছু। স্টাফের তলা বদলালে এখান থেকেই বদলে দিন।</div>
       </div>
       <div class="field"><label>${id ? 'নতুন পাসওয়ার্ড (বদলাতে চাইলে)' : 'পাসওয়ার্ড'}</label>
         <input class="input" id="u_pass" type="text" placeholder="${id ? 'খালি রাখলে বদলাবে না' : 'কমপক্ষে ৪ অক্ষর'}" /></div>
       ${id ? `<label class="check">
         <input type="checkbox" id="u_active" ${u.active ? 'checked' : ''} /> অ্যাকাউন্ট চালু</label>
-      <div class="hint" style="margin-top:-6px">টিক তুলে দিলে অ্যাকাউন্ট <b>বন্ধ</b> — উনি আর ঢুকতে পারবেন না,
-        কিন্তু তাঁর পুরোনো অর্ডার আর টাকার হিসাব সব থেকে যাবে। সাময়িকভাবে বন্ধ রাখতে এটাই ভালো।</div>` : ''}`,
+      <div class="hint" style="margin-top:-6px">বন্ধ করলে উনি ঢুকতে পারবেন না, তবে হিসাব সব থেকে যাবে।</div>` : ''}`,
     footer: `<div class="btn-row">
       ${id && id !== S.boot.user.id
         ? `<button class="btn danger" data-act="userdel" data-id="${id}"
@@ -2095,15 +2070,13 @@ async function viewSettings() {
       <div class="field"><label>অফিসের নাম</label><input class="input" name="office_name" value="${esc(s.office_name)}" /></div>
       <div class="field"><label>অফিসের তলাগুলো</label>
         <input class="input" name="floors" value="${esc(s.floors || '2,3,4,5')}" placeholder="2,3,4,5" />
-        <div class="hint">কমা দিয়ে লিখুন। প্রত্যেক তলার হিসাব আলাদা — এক তলার কিছু অন্য তলার কেউ দেখে না।</div></div>
+        <div class="hint">কমা দিয়ে লিখুন।</div></div>
       <label class="check">
         <input type="checkbox" name="allow_register" ${s.allow_register === '1' ? 'checked' : ''} />
         নতুন কেউ নিজে রেজিস্ট্রেশন করতে পারবে</label>
-      <div class="hint" style="margin-top:-6px;margin-bottom:12px">বন্ধ করলে শুধু অ্যাডমিনই নতুন ইউজার বানাতে পারবেন।</div>
       <label class="check">
         <input type="checkbox" name="money_module" ${s.money_module === '1' ? 'checked' : ''} />
         জমা / ফেরতের হিসাব চালু রাখুন</label>
-      <div class="hint" style="margin-top:-6px;margin-bottom:12px">বন্ধ করলে "টাকা" ট্যাবটা লুকিয়ে যাবে — শুধু অর্ডার আর বাজারের লিস্ট থাকবে।</div>
       <button class="btn primary block">সেভ করুন</button>
     </div></form>`, { title: 'সেটিংস', back: 'more' });
 
@@ -2205,10 +2178,7 @@ document.addEventListener('click', async (e) => {
               <div class="field"><label>ক্যাটাগরি</label>
                 <input class="input" id="ni_cat" list="catlist" value="${esc(cats[0] || 'নাস্তা')}" />
                 <datalist id="catlist">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
-            </div>
-            <div class="hint">দামটা শুধু <b>${esc(shop?.name || 'এই দোকান')}</b>-এর জন্য বসবে।
-              অন্য দোকানেও জিনিসটা পাওয়া গেলে সেখানে গিয়ে আলাদা দাম বসিয়ে দিন —
-              না বসালে ওই দোকানে জিনিসটা দেখাবে না।</div>`,
+            </div>`,
           footer: `<button class="btn primary block" data-act="newitemsave" data-id="${id}">যোগ করুন</button>`,
           onOpen: () => setTimeout(() => $('#ni_name')?.focus(), 120),
         });
@@ -2317,8 +2287,7 @@ document.addEventListener('click', async (e) => {
                   </div>
                   <b class="amt">${tk(n.total)}</b>
                 </div>`).join('')}
-              </div></div>
-              <p class="hint center">কারো নামে চাপ দিলে তার অর্ডারটা খুলে যাবে — চাইলে বদলেও দিতে পারবেন।</p>`,
+              </div></div>`,
         });
         const btn = document.querySelector('[data-act="notif"] .badge');
         if (btn) btn.remove();
