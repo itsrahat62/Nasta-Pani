@@ -1186,7 +1186,10 @@ async function viewToday() {
           `<button class="btn sm ${st && st.key === k ? 'primary' : ''}" data-act="setstatus" data-s="${k}"
             title="${esc(v.label)}">${v.icon} ${esc(v.label)}</button>`).join('')}
       </div>
+      <!-- autocomplete="off" — নইলে ব্রাউজার এই ঘরটায় সেভ করা পাসওয়ার্ড/ইউজারনেম
+           বসিয়ে দেয়, আর স্টাফ খেয়াল না করলে সেটাই সবাইকে জানিয়ে দেওয়া হয় -->
       <input class="input" id="statusmsg" style="margin-top:8px;font-size:13.5px"
+        autocomplete="off" ${RAW_TEXT}
         placeholder="বাড়তি কথা (ইচ্ছা হলে)" value="${esc(st?.message || '')}" />
     </div></div>
 
