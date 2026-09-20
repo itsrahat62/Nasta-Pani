@@ -76,20 +76,25 @@ function periodBar() {
   const month = p.mode === 'month' ? p.month : cur;
   const r = periodRange();
   const [y, m] = month.split('-').map(Number);
+  // সাদামাটা রাখা হলো: বাছা অংশটা শুধু হালকা করে দেখানো হয়, পুরো বোতাম রঙিন নয়।
+  // কোন সময়টা দেখাচ্ছে সেটা উপরের হেডারেই লেখা থাকে, তাই আলাদা লাইন লাগে না।
+  // "তারিখ থেকে" ঘরটা সবসময় ঝুলে থাকলে বারটা দুই লাইন হয়ে যায় আর ভিড় লাগে —
+  // তাই ওটা 📅 বোতামের পিছনে, যার দরকার সে চাপ দিয়ে খুলবে।
+  const since = p.mode === 'since' || S.sinceOpen;
   return `<div class="card period"><div class="card-b">
     <div class="period-row">
       <button class="btn sm" data-act="period" data-mode="month" data-month="${addMonths(month, -1)}" title="আগের মাস">←</button>
-      <button class="btn sm grow ${p.mode === 'month' ? 'primary' : ''}" data-act="period" data-mode="month"
-        data-month="${month}">🗓️ ${MONTHS[m - 1]} ${bn(y)}</button>
+      <button class="btn sm grow ${p.mode === 'month' ? 'sel' : ''}" data-act="period" data-mode="month"
+        data-month="${month}">${MONTHS[m - 1]} ${bn(y)}</button>
       <button class="btn sm" data-act="period" data-mode="month" data-month="${addMonths(month, 1)}"
         ${month >= cur ? 'disabled' : ''} title="পরের মাস">→</button>
-      <button class="btn sm ${p.mode === 'all' ? 'primary' : ''}" data-act="period" data-mode="all">সব</button>
+      <button class="btn sm ${p.mode === 'all' ? 'sel' : ''}" data-act="period" data-mode="all">সব</button>
+      <button class="btn sm ${since ? 'sel' : ''}" data-act="sincetoggle" title="অমুক তারিখ থেকে আজ পর্যন্ত">তারিখ</button>
     </div>
-    <label class="period-since ${p.mode === 'since' ? 'on' : ''}">
-      <span>এই তারিখ থেকে আজ পর্যন্ত</span>
+    ${since ? `<label class="period-since ${p.mode === 'since' ? 'on' : ''}">
+      <span>তারিখ থেকে</span>
       <input class="input" type="date" id="psince" max="${today}" value="${p.mode === 'since' ? p.from : ''}" />
-    </label>
-    <div class="hint" style="margin:6px 0 0">দেখাচ্ছে: <b>${esc(r.label)}</b></div>
+    </label>` : ''}
   </div></div>`;
 }
 /** সময় বদলালে যে পাতা বা শিট খোলা আছে সেটাই নতুন করে আঁকা */
@@ -99,18 +104,15 @@ function repaintPeriod() {
 }
 
 // ------------------------------------------------------------ রঙ ও ইমোজি
-const PALETTE = [
-  { a: '#ff6a3d', s: '#fff0e8', g: 'linear-gradient(135deg,#ffa03c,#ff6a3d)' }, // কমলা
-  { a: '#0e9d8a', s: '#e2f7f4', g: 'linear-gradient(135deg,#23c4a8,#0e9d8a)' }, // সবুজাভ নীল
-  { a: '#6244e0', s: '#efeaff', g: 'linear-gradient(135deg,#8b6dff,#6244e0)' }, // বেগুনি
-  { a: '#ef3f76', s: '#ffe9f1', g: 'linear-gradient(135deg,#ff6f9c,#ef3f76)' }, // গোলাপি
-  { a: '#2f7cff', s: '#e6f0ff', g: 'linear-gradient(135deg,#4facfe,#2f7cff)' }, // নীল
-  { a: '#d4a017', s: '#fff6dd', g: 'linear-gradient(135deg,#ffd166,#d4a017)' }, // সোনালি
-];
-/** সূচক অনুযায়ী রঙের CSS ভ্যারিয়েবল */
-function accent(i) {
-  const p = PALETTE[((i % PALETTE.length) + PALETTE.length) % PALETTE.length];
-  return `--accent:${p.a};--accent-soft:${p.s};--accent-grad:${p.g}`;
+/**
+ * আগে এখান থেকে ছয়টা রঙ ঘুরিয়ে ঘুরিয়ে দেওয়া হতো — প্রতিটা কার্ড, প্রতিটা সারি
+ * আলাদা রঙ পেত। দেখতে রংধনু হয়ে যেত আর চোখ কোথায় যাবে বোঝা যেত না।
+ *
+ * এখন রঙ একটাই (CSS-এর --accent)। ফাংশনটা রাখা হলো যাতে সব জায়গার
+ * `style="${accent(i)}"` ভাঙতে না হয় — শুধু আর কিছু বদলায় না।
+ */
+function accent(_i) {
+  return '';
 }
 function hashIdx(s) {
   let h = 0;
@@ -593,18 +595,23 @@ function paintOrder() {
   const usualLines = S.usual?.lines || [];
   const canQuick = !locked && usualLines.length > 0;
 
+  // লক আর "গ্রহণ হয়েছে কি না" — একই কথার দুই দিক। দুটো ব্যানার পাশাপাশি বসলে
+  // পাতার মাথাটাই ভরে যায়, তাই অর্ডার জমা থাকলে একটাই ব্যানার: অবস্থা উপরে,
+  // "নিজে আর বদলানো যাবে না" কথাটা ওরই ছোট লাইনে।
+  const accept = acceptBanner(locked);
+
   shell(`
     ${S.orderFor ? `<div class="banner info"><span class="ic">🧑‍🍳</span><div>
       আপনি <b>${esc(S.orderFor.name)}</b>-এর হয়ে অর্ডার করছেন
       <small>শেষে "সেভ করুন" চাপতে ভুলবেন না</small></div></div>` : statusBanner()}
-    ${locked && S.orderMeta.lock_reason
+    ${locked && S.orderMeta.lock_reason && !accept
       ? `<div class="banner warn"><span class="ic">🔒</span><div>${esc(S.orderMeta.lock_reason)}</div></div>` : ''}
     ${!locked && S.orderMeta.late_note
       ? `<div class="banner warn"><span class="ic">⏳</span><div>${esc(S.orderMeta.late_note)}</div></div>` : ''}
     ${S.orderMeta.cancelled_order && !S.orderMeta.order ? `<div class="banner muted"><span class="ic">🚫</span><div>
       এই দিনের আগের অর্ডারটা (${tk(S.orderMeta.cancelled_order.total)}) বাতিল করা হয়েছিল
       <small>ইতিহাসে ওটা "বাতিল" হিসেবে থেকে গেছে। চাইলে নিচে থেকে নতুন করে অর্ডার দিন।</small></div></div>` : ''}
-    ${acceptBanner()}
+    ${accept}
     ${subsNotice()}
     ${canQuick ? `
     <div class="card" style="border:1.5px solid var(--brand);">
@@ -612,7 +619,7 @@ function paintOrder() {
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
           <span style="font-size:26px">⚡</span>
           <div style="flex:1">
-            <div style="font-weight:800;font-size:16px">${S.orderFor ? `${esc(S.orderFor.name)}-এর রোজকার` : 'আপনার রোজকার অর্ডার'}</div>
+            <div style="font-weight:700;font-size:16px">${S.orderFor ? `${esc(S.orderFor.name)}-এর রোজকার` : 'আপনার রোজকার অর্ডার'}</div>
             <div class="hint" style="margin:0">${esc(usualSummary())}</div>
           </div>
         </div>
@@ -629,7 +636,7 @@ function paintOrder() {
         ${S.shops.map((s) => `<button class="btn sm ${S.shopId === s.id ? 'primary' : ''}"
           data-act="setshop" data-id="${s.id}" ${locked ? 'disabled' : ''}>🏪 ${esc(s.name)}</button>`).join('')}
       </div>
-      <div class="hint">দোকান বদলালে দামও বদলে যাবে — একেক দোকানে একেক রকম দাম।</div>
+      ${locked ? '' : `<div class="hint">একেক দোকানে একেক রকম দাম।</div>`}
     </div></div>` : ''}
     ${body}
     <div class="card"><div class="card-b">
@@ -670,19 +677,23 @@ function refreshSaveBtn() {
  * স্টাফ অর্ডারটা গ্রহণ করেছেন কি না — ইউজারের সবচেয়ে বড় প্রশ্নটার উত্তর।
  * স্টাফ কারো হয়ে অর্ডার করলে এটা দেখানোর দরকার নেই, তিনি নিজেই তো দায়িত্বে।
  */
-function acceptBanner() {
+function acceptBanner(locked = false) {
   const o = S.orderMeta?.order;
   if (!o || S.orderFor) return '';
+  // অর্ডার জমা মানেই নিজে আর বদলানো যাবে না — কথাটা এখানেই সেরে নেওয়া হয়,
+  // তাই আলাদা 🔒 ব্যানারটা আর লাগে না
+  const note = locked ? ' · নিজে আর বদলানো যাবে না' : '';
   if (o.accepted) {
     const who = S.orderMeta.accepted_by_name;
     const at = o.accepted_at ? bn(String(o.accepted_at).slice(11, 16)) : '';
     return `<div class="banner ok"><span class="ic">✅</span><div>
-      আপনার অর্ডার গ্রহণ করা হয়েছে
-      <small>${who ? esc(who) + ' নিয়েছেন' : 'স্টাফ নিয়েছেন'}${at ? ` · ${at}` : ''}</small></div></div>`;
+      গ্রহণ করা হয়েছে
+      <small>${who ? esc(who) + ' নিয়েছেন' : 'স্টাফ নিয়েছেন'}${at ? ` · ${at}` : ''}${note}</small></div></div>`;
   }
-  return `<div class="banner warn"><span class="ic">⏳</span><div>
+  // "এখনো হয়নি" কোনো ভুল নয়, শুধু অপেক্ষা — তাই লাল/গোলাপি নয়, সাদামাটা
+  return `<div class="banner muted"><span class="ic">⏳</span><div>
     এখনো গ্রহণ করা হয়নি
-    <small>আপনার তলার দায়িত্বে যিনি আছেন, তিনি দেখে নিলেই এখানে ✅ দেখাবে</small></div></div>`;
+    <small>স্টাফ দেখে নিলেই ✅ হয়ে যাবে${note}</small></div></div>`;
 }
 
 /** যা পাওয়া যায়নি আর বদলে যা আনা হয়েছে — সেই খবরটা উপরেই জানিয়ে দেওয়া */
@@ -716,13 +727,23 @@ function itemRow(it, locked) {
   const mainKey = `${it.id}|${def ? def.id : 0}`;
   const mainLine = S.cart.get(mainKey);
 
+  // "অন্য রকম" আর "না পেলে কী" — দুটোই নামের নিচে একই লাইনে।
+  // আগে "না পেলে..." চিপটার জন্য আলাদা একটা পুরো সারি বসত, তাই একটা জিনিস
+  // বাছলেই তালিকাটা দুই সারি লম্বা হয়ে যেত — পাতাটা ওতেই হিজিবিজি লাগত।
+  const chips = [
+    hasOpts && it.options.length > 1
+      ? `<button class="chip" data-act="pickopt" data-item="${it.id}"
+          ${locked || off ? 'disabled' : ''}>🔀 অন্য রকম (${bn(it.options.length)})</button>`
+      : '',
+    mainLine ? fbChip(mainKey, mainLine) : '',
+  ].filter(Boolean).join('');
+
   let html = `<div class="item ${off ? 'off' : ''} ${lines.length ? 'picked' : ''}">
     <div class="ava">${emojiFor(it.name)}</div>
     <div class="info">
       <div class="nm">${esc(it.name)} ${off ? `<span class="chip warn">আজ নেই</span>` : ''}</div>
       <div class="pr">${tk(base)}${def ? ` · ${esc(def.name)}` : ''}</div>
-      ${hasOpts && it.options.length > 1 ? `<button class="chip brand" data-act="pickopt" data-item="${it.id}"
-        style="margin-top:4px" ${locked || off ? 'disabled' : ''}>🔀 অন্য রকম (${bn(it.options.length)})</button>` : ''}
+      ${chips ? `<div class="chip-line">${chips}</div>` : ''}
     </div>
     ${stepper(mainKey, mainLine ? mainLine.qty : 0, locked || off)}
   </div>`;
@@ -733,8 +754,6 @@ function itemRow(it, locked) {
     const op = it.options.find((o) => o.id === l.option_id);
     html += subLine(it, key, l, op, locked);
   }
-  // ডিফল্ট লাইনটার বিকল্প ঠিক করার জায়গা
-  if (mainLine) html += fbLine(mainKey, mainLine, locked);
   return html;
 }
 
@@ -743,19 +762,14 @@ function subLine(it, key, l, op, locked) {
     <div class="info">
       <div class="nm">↳ ${esc(op ? op.name : it.name)}
         <span class="pr">${tk(priceOf(it) + (op ? op.price_delta : 0))}</span></div>
-      ${fbChip(key, l)}
+      <div class="chip-line">${fbChip(key, l)}</div>
     </div>
     ${stepper(key, l.qty, locked)}
   </div>`;
 }
-function fbLine(key, l, locked) {
-  return `<div class="item sub-line picked" style="padding-top:4px;padding-bottom:8px">
-    <div class="info">${fbChip(key, l)}</div>
-  </div>`;
-}
 function fbChip(key, l) {
   return `<button class="chip ${l.fallback_type === 'skip' && !l.fallback_note ? '' : 'info'}"
-    data-act="fb" data-key="${key}" style="margin-top:4px">⚙ ${esc(fbLabel(l))}</button>`;
+    data-act="fb" data-key="${key}">⚙ ${esc(fbLabel(l))}</button>`;
 }
 
 function fbLabel(l) {
@@ -953,25 +967,20 @@ async function viewHistory() {
 }
 
 // ====================================================== টাকার খাতা (পাসবই)
-/** খাতার একটা ঘটনার নাম — "💵 জমা দিলেন", "🍽️ নাস্তা · ১২ সেপ্টেম্বরের" … */
-function bookLabel(r) {
-  const od = r.order_date ? ` · ${dateOf(r.order_date)}` : '';
-  switch (r.kind) {
-    case 'deposit': return { ic: '💵', t: 'জমা দিলেন' };
-    case 'refund': return { ic: '↩️', t: 'ফেরত নিলেন' };
-    case 'adjust': return { ic: '⚖️', t: 'সমন্বয়' };
-    case 'charge': return { ic: '🍽️', t: `নাস্তা${od}` };
-    case 'pending': return { ic: '⏳', t: `নাস্তা${od} (দেওয়া বাকি)` };
-    default: return { ic: '•', t: r.kind };
-  }
-}
 /**
- * সারির নিচের ছোট লেখা। খরচের সারিতে সার্ভার নিজে যে "2026-09-10 তারিখের নাস্তা" নোট
- * বসায়, সেটা উপরের নামেই আছে — দুবার দেখানোর দরকার নেই।
+ * খাতার সারির নাম — যতটা ছোট রাখা যায়।
+ * তারিখটা নিচের লাইনেই থাকে, তাই নামের সাথে আর জোড়া হয় না — আগে একই তারিখ
+ * দুবার লেখা হতো, ওটাই সবচেয়ে হিজিবিজি লাগত। ইমোজিও তুলে দেওয়া হলো।
  */
-function bookNote(r) {
-  if (r.kind === 'charge' && /তারিখের নাস্তা$/.test(r.note || '')) return '';
-  return r.note || '';
+function bookLabel(r) {
+  switch (r.kind) {
+    case 'deposit': return 'জমা দিলেন';
+    case 'refund': return 'ফেরত নিলেন';
+    case 'adjust': return 'সমন্বয়';
+    case 'charge': return 'নাস্তা';
+    case 'pending': return 'নাস্তা · দেওয়া বাকি';
+    default: return r.kind;
+  }
 }
 
 /**
@@ -982,12 +991,11 @@ function passbook(st, { canDelete = false } = {}) {
   const rows = st.rows || [];
   const sign = (v) => (v > 0 ? '+' : v < 0 ? '−' : '');
   const body = rows.map((r) => {
-    const L = bookLabel(r);
     const amt = Number(r.amount);
     return `<div class="pbrow ${r.pending ? 'pending' : ''}">
       <div class="pb-what">
-        <b>${L.ic} ${esc(L.t)}</b>
-        <small>${shortDate(r.date)} · ${bn(String(r.at).slice(11, 16))}${bookNote(r) ? ` · ${esc(bookNote(r))}` : ''}</small>
+        <b>${esc(bookLabel(r))}</b>
+        <small>${shortDate(r.order_date || r.date)}</small>
       </div>
       <div class="pb-amt ${amt > 0 ? 'pos' : 'neg'}">${sign(amt)}${tk(Math.abs(amt))}</div>
       <div class="pb-bal ${Number(r.balance) < 0 ? 'neg' : ''}">${tk(r.balance)}</div>
@@ -997,10 +1005,12 @@ function passbook(st, { canDelete = false } = {}) {
     </div>`;
   }).join('');
 
+  // শুরুর জেরের সারিটা শুধু তখনই, যখন আগে থেকে টাকা ছিল — ০ হলে দেখিয়ে লাভ নেই
+  const opening = Number(st.opening);
   return `<div class="card passbook"><div class="card-b tight">
     <div class="pbrow head"><div class="pb-what">কী হলো</div><div class="pb-amt">টাকা</div><div class="pb-bal">জের</div></div>
-    <div class="pbrow edge"><div class="pb-what"><b>${st.from ? `${dateOf(st.from)} আগে জমা ছিল` : 'শুরুতে'}</b></div>
-      <div class="pb-amt"></div><div class="pb-bal">${tk(st.opening)}</div></div>
+    ${opening ? `<div class="pbrow edge"><div class="pb-what"><b>আগের জের</b></div>
+      <div class="pb-amt"></div><div class="pb-bal">${tk(opening)}</div></div>` : ''}
     ${body || `<div class="empty" style="padding:22px">এই সময়ে কোনো লেনদেন নেই</div>`}
     <div class="pbrow edge"><div class="pb-what"><b>${st.to && st.to !== S.boot.today ? `${shortDate(st.to)} শেষে` : 'এখন হাতে'}</b></div>
       <div class="pb-amt"></div><div class="pb-bal ${Number(st.closing) < 0 ? 'neg' : ''}">${tk(st.closing)}</div></div>
@@ -1009,12 +1019,12 @@ function passbook(st, { canDelete = false } = {}) {
 
 // ======================================================= ৩. ড্যাশবোর্ড (ইউজার)
 /**
- * ইউজারের নিজের ড্যাশবোর্ড — দুটো ভাগ:
- *   ভাগ ১: টাকার খাতা — জমা দেওয়া টাকা দিনে দিনে কীভাবে কমছে, এখন কত ফেরত পাবেন
- *   ভাগ ২: এই সময়ে আর শুরু থেকে মোট কত টাকার নাস্তা খেয়েছেন
+ * ইউজারের ড্যাশবোর্ড — যত কম জিনিস পর্দায়, তত ভালো।
+ * উপরে একটাই বড় অঙ্ক (এখন কত), নিচে খাতা, শেষে দুটো ছোট ঘর। ব্যাখ্যার লম্বা
+ * প্যারা, নম্বর দেওয়া শিরোনাম আর দ্বিতীয় বড় অঙ্কের কার্ড — সব তুলে দেওয়া হলো।
  */
 async function viewDashboard() {
-  shell(`<div class="spin"></div>`, { title: 'আমার ড্যাশবোর্ড' });
+  shell(`<div class="spin"></div>`, { title: 'আমার হিসাব' });
   const r = periodRange();
   const st = await api('/api/ledger/statement' + periodQS());
   const now = Number(st.now);
@@ -1025,33 +1035,22 @@ async function viewDashboard() {
     <div class="hero ${now > 0 ? 'green' : now < 0 ? 'red' : 'blue'}">
       <div class="lbl">${now < 0 ? 'আপনার কাছে পাওনা' : 'এখন ফেরত পাবেন'}</div>
       <div class="val">${tk(Math.abs(now))}</div>
-      <div class="sub">${now > 0 ? 'এই টাকাটা এখন স্টাফের কাছে জমা আছে'
-        : now < 0 ? 'এই টাকাটা স্টাফকে দিতে হবে' : 'সব হিসাব মিটে গেছে'}${
-        Number(ever.pending) ? ` · এর মধ্যে ${tk(ever.pending)}-এর নাস্তা এখনো দেওয়া বাকি` : ''}</div>
+      ${Number(ever.pending) ? `<div class="sub">${tk(ever.pending)}-এর নাস্তা দেওয়া বাকি</div>` : ''}
     </div>
 
     ${periodBar()}
 
-    <!-- ভাগ ১ — জমা কীভাবে কমছে -->
-    <div class="section-title">১· টাকার খাতা — জমা কীভাবে কমছে</div>
+    <div class="section-title">টাকার খাতা</div>
     ${passbook(st)}
-    <p class="hint">প্রতিটা সারির ডানে <b>জের</b> = ওই ঘটনার পর আপনার কত টাকা জমা রইল।
-      ⏳ চিহ্নের নাস্তা এখনো দেওয়া হয়নি, তবু টাকাটা এখন থেকেই বাদ ধরা হয়েছে।</p>
 
-    <!-- ভাগ ২ — মোট কত খরচ -->
-    <div class="section-title">২· কত টাকার নাস্তা খেয়েছেন</div>
-    <div class="stats">
-      <div class="stat g1"><div class="lbl">এই সময়ে নাস্তা</div><div class="val">${tk(t.food)}</div>
-        <div class="sub">${bn(t.food_days)} দিন${t.food_days ? ` · দিনে গড়ে ${tk(t.food / t.food_days)}` : ''}</div></div>
-      <div class="stat g2"><div class="lbl">এই সময়ে জমা</div><div class="val">${tk(t.deposit)}</div></div>
-      ${Number(t.refund) ? `<div class="stat g4"><div class="lbl">ফেরত নিয়েছেন</div><div class="val">${tk(t.refund)}</div></div>` : ''}
+    <div class="stats" style="grid-template-columns:repeat(2,1fr)">
+      <div class="stat"><div class="lbl">এই সময়ে নাস্তা</div><div class="val">${tk(t.food)}</div>
+        <div class="sub">${bn(t.food_days)} দিন</div></div>
+      <div class="stat"><div class="lbl">এই সময়ে জমা</div><div class="val">${tk(t.deposit)}</div></div>
     </div>
-    <div class="hero" style="margin-top:4px">
-      <div class="lbl">শুরু থেকে এ পর্যন্ত মোট নাস্তা</div>
-      <div class="val">${tk(ever.food)}</div>
-      <div class="sub">${bn(ever.food_days)} দিনের · মোট জমা দিয়েছেন ${tk(ever.deposit)}${
-        Number(ever.refund) ? ` · ফেরত নিয়েছেন ${tk(ever.refund)}` : ''}</div>
-    </div>`, { title: 'আমার ড্যাশবোর্ড', sub: r.label });
+    <p class="hint center">শুরু থেকে মোট নাস্তা ${tk(ever.food)} · জমা ${tk(ever.deposit)}${
+      Number(ever.refund) ? ` · ফেরত ${tk(ever.refund)}` : ''}</p>`,
+    { title: 'আমার হিসাব', sub: r.label });
 }
 
 // =========================================================== ৩. টাকার হিসাব
@@ -2126,6 +2125,12 @@ document.addEventListener('click', async (e) => {
       // সময় বাছাই — ইতিহাস আর টাকার খাতা
       case 'period':
         S.period = el.dataset.mode === 'all' ? { mode: 'all' } : { mode: 'month', month: el.dataset.month };
+        S.sinceOpen = false;
+        return repaintPeriod();
+      case 'sincetoggle':
+        // খোলা থাকলে বন্ধ — আর "তারিখ থেকে" চালু থাকলে চলতি মাসে ফিরে আসা
+        S.sinceOpen = !(S.period?.mode === 'since' || S.sinceOpen);
+        if (!S.sinceOpen && S.period?.mode === 'since') S.period = { mode: 'month', month: S.boot.today.slice(0, 7) };
         return repaintPeriod();
       case 'ledgertab': return userLedgerSheet(id, el.dataset.tab);
       case 'ledgerback': S.ledgerBack = null; return moneyTodaySheet();
