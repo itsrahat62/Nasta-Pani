@@ -941,6 +941,10 @@ function orderCard(o, oi) {
         <b class="amt">${tk(l.missing ? l.sub_subtotal : l.subtotal)}</b>
       </div>`).join('')}
       ${off ? `<div class="item"><div class="info"><div class="pr">এই অর্ডারটা বাতিল করা হয়েছিল — টাকা কাটা হয়নি</div></div></div>` : ''}
+      ${!off && isStaff() ? `<div class="item">
+        <div class="info"></div>
+        <button class="btn sm danger" data-act="cancelorder" data-id="${o.id}">🚫 বাতিল করুন</button>
+      </div>` : ''}
     </div>
   </div>`;
 }
@@ -1289,19 +1293,36 @@ function availSheet() {
 }
 
 /** একজনের অর্ডারের বিস্তারিত — তালিকা ছোট রাখতে আলাদা শিটে */
+/**
+ * একজনের অর্ডারের পুরো ছবি — স্টাফ/অ্যাডমিন এখান থেকেই সব করেন।
+ *
+ * আগে "গ্রহণ" ছিল তিনটে একরকম দেখতে বোতামের একটা, আর "বাতিল" লুকিয়ে ছিল
+ * "অবস্থা" ড্রপডাউনের ভেতরে — কোনটা কীভাবে হয় বোঝাই যেত না। এখন দুটোই
+ * আলাদা, রঙ দিয়ে চেনা বোতাম: সবুজ = গ্রহণ, লাল = বাতিল। ড্রপডাউনে শুধু
+ * "নাস্তা কোন অবস্থায়" (অপেক্ষায় / কেনা / দেওয়া) — বাতিল ওখান থেকে সরানো
+ * হলো। আর কিছু না করে বেরোতে হলে উপরের ✕ আছে, তাই "বুঝেছি" বোতামটাও গেল।
+ */
 function orderDetailSheet(orderId) {
   const o = (S.cache.orders || []).find((x) => x.id === orderId);
   if (!o) return;
+  const off = o.status === 'cancelled';
+  // "বাতিল" আর ড্রপডাউনে নেই — ওটা নিচের লাল বোতামের কাজ
+  const flow = Object.entries(OSTATUS).filter(([k]) => k !== 'cancelled');
   sheet({
     title: esc(o.user_name),
-    body: `<div style="${accent(hashIdx(o.user_name))}">
-      <div class="banner info"><span class="ic">🏪</span><div>${esc(o.shop_name || 'দোকান বলা হয়নি')}
-        <small>PIN ${bn(o.pin || '—')}${o.user_floor ? ` · ${bn(o.user_floor)}য় তলা` : ''} · মোট ${tk(o.total)}</small></div></div>
+    body: `
+      <div class="who-line">
+        <b>🏪 ${esc(o.shop_name || 'দোকান বলা হয়নি')}</b>
+        <span>PIN ${bn(o.pin || '—')}${o.user_floor ? ` · ${bn(o.user_floor)}য় তলা` : ''}</span>
+        <b class="amt">${tk(o.total)}</b>
+      </div>
+      ${off ? `<div class="banner muted"><span class="ic">🚫</span><div>এই অর্ডারটা বাতিল
+        <small>টাকা কাটা হয়নি · নতুন করে দিতে হলে "বদলান"-এ যান</small></div></div>` : ''}
       <div class="card"><div class="card-b tight">
         ${o.lines.map((l) => `<div class="item ${l.missing ? 'gone' : ''}">
           <div class="ava">${l.missing ? '🔁' : emojiFor(l.item_name)}</div>
           <div class="info">
-            <div class="nm">${esc(l.item_name)}${l.option_name ? ` <span class="chip brand">${esc(l.option_name)}</span>` : ''} × ${bn(l.qty)}</div>
+            <div class="nm">${esc(l.item_name)}${l.option_name ? ` <span class="chip">${esc(l.option_name)}</span>` : ''} × ${bn(l.qty)}</div>
             ${l.missing ? `<div class="pr">${esc(subTextOf(l))}</div>`
               : l.fallback_type !== 'skip' || l.fallback_note ? `<div class="pr">⚙ ${esc(fbTextOf(l))}</div>` : ''}
           </div>
@@ -1312,16 +1333,26 @@ function orderDetailSheet(orderId) {
         </div>`).join('')}
         ${o.note ? `<div class="item"><div class="info"><div class="pr">📝 ${esc(o.note)}</div></div></div>` : ''}
       </div></div>
-      <div class="field"><label>অবস্থা</label>
+      ${off ? '' : `<div class="field" style="margin-bottom:0"><label>নাস্তা কোন অবস্থায়</label>
         <select class="input" data-act="ostatus" data-id="${o.id}">
-          ${Object.entries(OSTATUS).map(([k, v]) => `<option value="${k}" ${o.status === k ? 'selected' : ''}>${v.t}</option>`).join('')}
-        </select></div>
-    </div>`,
-    footer: `<div class="btn-row">
+          ${flow.map(([k, v]) => `<option value="${k}" ${o.status === k ? 'selected' : ''}>${v.t}</option>`).join('')}
+        </select></div>`}`,
+    // দুই সারিতে দুটো করে — একসারিতে চারটে বোতাম বসালে সবগুলোই ছোট আর
+    // একরকম দেখতে হয়ে যায়, তখন আবার কোনটা কী বোঝা যায় না
+    footer: off
+      ? `<div class="btn-row">
+      <button class="btn" data-act="orderforpick" data-id="${o.user_id}"
+        data-name="${esc(o.user_name)}">✏️ নতুন করে অর্ডার দিন</button>
+      <button class="btn" data-act="closesheet">ঠিক আছে</button>
+    </div>`
+      : `<div class="btn-row" style="margin-bottom:8px">
       <button class="btn ${o.accepted ? '' : 'ok'}" data-act="accept" data-id="${o.id}"
         data-v="${o.accepted ? 0 : 1}">${o.accepted ? '↩ গ্রহণ ফিরিয়ে নিন' : '✅ গ্রহণ করলাম'}</button>
+      <button class="btn danger" data-act="cancelorder" data-id="${o.id}">🚫 অর্ডার বাতিল</button>
+    </div>
+    <div class="btn-row">
       <button class="btn" data-act="orderforpick" data-id="${o.user_id}" data-name="${esc(o.user_name)}">✏️ বদলান</button>
-      <button class="btn primary" data-act="closesheet">বুঝেছি</button>
+      <button class="btn" data-act="closesheet">ঠিক আছে</button>
     </div>`,
   });
 }
@@ -2134,6 +2165,21 @@ document.addEventListener('click', async (e) => {
         if (!confirm('এই অর্ডারটা বাতিল করবেন?\n\nমুছে যাবে না — ইতিহাসে "বাতিল" হিসেবে থেকে যাবে, আর টাকা কাটা হবে না।')) return;
         await api('/api/orders/' + S.orderMeta.order.id, { method: 'DELETE' });
         toast('🚫 বাতিল হয়েছে — ইতিহাসে থেকে যাবে', 'ok'); return viewOrder();
+
+      // ইতিহাসের যেকোনো অর্ডার কার্ড থেকে বাতিল — স্টাফ নিজের তলার, অ্যাডমিন সবার।
+      // আগে বাতিল করার একটাই পথ ছিল: ওই দিনের তারিখ বেছে, ওই ব্যক্তির অর্ডার পাতায়
+      // গিয়ে। পুরোনো বা অন্য তলার অর্ডার বাতিল করা কঠিন হয়ে যেত।
+      case 'cancelorder': {
+        if (!confirm('এই অর্ডারটা বাতিল করবেন?\n\nমুছে যাবে না — ইতিহাসে "বাতিল" হিসেবে থেকে যাবে, আর টাকা কাটা হবে না।')) return;
+        await api('/api/orders/' + id, { method: 'DELETE' });
+        toast('🚫 বাতিল হয়েছে — ইতিহাসে থেকে যাবে', 'ok');
+        // যে শিট বা পাতা খোলা ছিল সেটাই নতুন করে আঁকা, যাতে "বাতিল" লেখাটা দেখা যায়।
+        // closeSheet() S.ledgerSheet খালি করে দেয়, তাই আগেই মনে রাখা হলো।
+        const book = S.ledgerSheet;
+        closeSheet();
+        if (book) return userLedgerSheet(book.id, book.tab);
+        return render();
+      }
 
       // সময় বাছাই — ইতিহাস আর টাকার খাতা
       case 'period':

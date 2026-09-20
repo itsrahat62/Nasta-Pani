@@ -265,6 +265,16 @@ main { padding: 16px 15px 24px; }
 .item.picked { box-shadow: inset 2px 0 0 var(--brand); }
 /* নামের নিচের ছোট বোতামগুলো — "অন্য রকম", "না পেলে কী" */
 .chip-line { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+
+/* কার অর্ডার, কোন দোকান, কত টাকা — এক লাইনে। আগে এটা নীল ব্যানার ছিল,
+   কিন্তু এটা কোনো খবর বা সতর্কতা নয়, শুধু তথ্য — তাই সাদামাটা লাইনই ঠিক। */
+.who-line {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 0 4px 10px;
+  font-size: 13px; color: var(--muted);
+}
+.who-line b { font-size: 14.5px; color: var(--ink); }
+.who-line .amt { margin-left: auto; }
 .item .ava {
   width: 44px; height: 44px; border-radius: 15px; flex-shrink: 0;
   display: grid; place-items: center; font-size: 22px;
