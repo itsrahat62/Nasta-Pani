@@ -123,19 +123,22 @@ void StartSession(HttpContext ctx, int userId)
 // ------------------------------------------------- দিনের অবস্থা (সবার জন্য)
 // অর্ডারের কোনো "শেষ সময়" নেই — স্টাফ বন্ধ করলেও অর্ডার করা যায়,
 // শুধু জানিয়ে দেওয়া হয় যে একটু দেরি হতে পারে।
-const string LATE = " — তবুও অর্ডার করলে একটু সময় লাগতে পারে";
+// lateMsg-এ অবস্থাটা আর লেখা হয় না — ওটা ঠিক উপরের label-এই আছে। আগে দুটোই
+// পাশাপাশি দেখানো হতো, ফলে পর্দার মাথায় পড়তে হতো "অর্ডার নেওয়া বন্ধ" আর তার
+// নিচেই "অর্ডার নেওয়া বন্ধ হয়ে গেছে — তবুও..."। এখন শুধু নতুন কথাটুকু।
+const string LATE = "তবুও অর্ডার করলে একটু সময় লাগতে পারে";
 var DAY_STATUS = new Dictionary<string, object>
 {
     ["open"] = new { label = "অর্ডার নেওয়া হচ্ছে", icon = "🟢", tone = "ok", canOrder = true,
                      late = false, lateMsg = "" },
     ["closed"] = new { label = "অর্ডার নেওয়া বন্ধ", icon = "🔴", tone = "warn", canOrder = true,
-                       late = true, lateMsg = "অর্ডার নেওয়া বন্ধ হয়ে গেছে" + LATE },
+                       late = true, lateMsg = LATE },
     ["buying"] = new { label = "বাজারে যাওয়া হয়েছে", icon = "🛵", tone = "info", canOrder = true,
-                       late = true, lateMsg = "নাস্তা কিনতে চলে গেছে" + LATE },
+                       late = true, lateMsg = LATE },
     ["arrived"] = new { label = "নাস্তা চলে এসেছে", icon = "📦", tone = "info", canOrder = true,
-                        late = true, lateMsg = "নাস্তা চলে এসেছে" + LATE },
+                        late = true, lateMsg = LATE },
     ["served"] = new { label = "নাস্তা পরিবেশন করা হয়েছে", icon = "✅", tone = "ok", canOrder = true,
-                       late = true, lateMsg = "নাস্তা পরিবেশন হয়ে গেছে" + LATE },
+                       late = true, lateMsg = LATE },
     ["off"] = new { label = "আজ নাস্তা নেই", icon = "🚫", tone = "warn", canOrder = false,
                     late = false, lateMsg = "" },
 };
@@ -197,11 +200,15 @@ string LockReason(string date, int? floor, dynamic? order = null)
     return "";
 }
 
-/// <summary>দেরি হয়ে গেলে ইউজারকে যে কথাটা দেখানো হবে (অর্ডার তবু করা যাবে)।</summary>
+/// <summary>
+/// দেরি হয়ে গেলে ইউজারকে যে কথাটা দেখানো হবে (অর্ডার তবু করা যাবে)।
+/// আগে সামনে আইকনটাও জোড়া হতো, কিন্তু কথাটা এখন যে ব্যানারের ছোট লাইনে বসে
+/// সেই ব্যানারেই আইকনটা আছে — তাই দুবার দেখানোর মানে হয় না।
+/// </summary>
 string LateNote(string date, int? floor)
 {
     var st = DayStatus(date, floor);
-    return st is not null && (bool)st["late"]! ? $"{st["icon"]} {st["lateMsg"]}" : "";
+    return st is not null && (bool)st["late"]! ? (string)st["lateMsg"]! : "";
 }
 
 // ------------------------------------------------------------- আইটেম লোড

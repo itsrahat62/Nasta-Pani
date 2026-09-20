@@ -462,12 +462,20 @@ function floorBar() {
   </div></div>`;
 }
 
-function statusBanner() {
+/**
+ * আজকের অবস্থা — "নাস্তা কিনতে চলে গেছে", "আজ নাস্তা নেই" ইত্যাদি।
+ *
+ * `lateNote` দিলে সেটা এই ব্যানারেরই ছোট লাইনে বসে। আগে ওটা আলাদা একটা
+ * ব্যানার পেত, ফলে পর্দার মাথায় পাশাপাশি দুটো লাল বাক্সে একই কথা দুবার লেখা
+ * থাকত — "🔴 অর্ডার নেওয়া বন্ধ" আর "🔴 অর্ডার নেওয়া বন্ধ হয়ে গেছে — তবুও...।"
+ */
+function statusBanner(lateNote = '') {
   const st = S.boot.status;
   if (!st) return '';   // স্টাফ কিছু না জানালে খালি জায়গা নষ্ট করার দরকার নেই
+  const sub = [st.message, String(lateNote || '').trim()].filter(Boolean).join(' · ');
   return `<div class="banner ${st.tone}"><span class="ic">${st.icon}</span><div>
     ${esc(st.label)}
-    ${st.message ? `<small>${esc(st.message)}</small>` : ''}
+    ${sub ? `<small>${esc(sub)}</small>` : ''}
   </div></div>`;
 }
 
@@ -603,18 +611,19 @@ function paintOrder() {
   shell(`
     ${S.orderFor ? `<div class="banner info"><span class="ic">🧑‍🍳</span><div>
       আপনি <b>${esc(S.orderFor.name)}</b>-এর হয়ে অর্ডার করছেন
-      <small>শেষে "সেভ করুন" চাপতে ভুলবেন না</small></div></div>` : statusBanner()}
+      <small>শেষে "সেভ করুন" চাপতে ভুলবেন না</small></div></div>`
+      : statusBanner(locked ? '' : S.orderMeta.late_note)}
     ${locked && S.orderMeta.lock_reason && !accept
       ? `<div class="banner warn"><span class="ic">🔒</span><div>${esc(S.orderMeta.lock_reason)}</div></div>` : ''}
-    ${!locked && S.orderMeta.late_note
-      ? `<div class="banner warn"><span class="ic">⏳</span><div>${esc(S.orderMeta.late_note)}</div></div>` : ''}
     ${S.orderMeta.cancelled_order && !S.orderMeta.order ? `<div class="banner muted"><span class="ic">🚫</span><div>
       এই দিনের আগের অর্ডারটা (${tk(S.orderMeta.cancelled_order.total)}) বাতিল করা হয়েছিল
       <small>ইতিহাসে ওটা "বাতিল" হিসেবে থেকে গেছে। চাইলে নিচে থেকে নতুন করে অর্ডার দিন।</small></div></div>` : ''}
     ${accept}
     ${subsNotice()}
     ${canQuick ? `
-    <div class="card" style="border:1.5px solid var(--brand);">
+    <!-- আগে পুরো কার্ডটায় কমলা বর্ডার ছিল — নিচের কমলা বোতামটাই তো চোখ টানে,
+         বাক্সটাও রঙিন হলে দুটোতে চোখ ভাগ হয়ে যায় -->
+    <div class="card">
       <div class="card-b">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
           <span style="font-size:26px">⚡</span>
@@ -1856,6 +1865,52 @@ async function viewShops() {
   `, { title: 'দোকান ও দাম' });
 }
 
+/**
+ * দোকানের দামের তালিকা — উপরে শুধু যেগুলো এই দোকানে আছে।
+ *
+ * আগে অফিসের সব আইটেম একসাথে ঢালা থাকত, ফলে নতুন দোকান খুললে কুড়িটা "নেই"
+ * ঘরের ভিড়ে আসল মেনুটাই হারিয়ে যেত। এখন যেগুলোর দাম বসানো আছে সেগুলোই
+ * দেখা যায়; বাকিগুলো "+ আরও জিনিস" বোতামের পিছনে, দরকার হলে খুলে নেওয়া যায়।
+ *
+ * খোলা/বন্ধ করা হয় সরাসরি DOM-এ (hidden), নতুন করে আঁকা হয় না — নইলে
+ * এর মধ্যে টাইপ করা দামগুলো মুছে যেত।
+ */
+function priceList(s, items) {
+  const priceOfShop = (it) => (it.shop_prices ? it.shop_prices[s.id] : null);
+  const has = items.filter((it) => priceOfShop(it) != null);
+  const rest = items.filter((it) => priceOfShop(it) == null);
+  const row = (it) => {
+    const p = priceOfShop(it);
+    return `<div class="item ${p == null ? 'off' : ''}">
+      <div class="ava">${emojiFor(it.name)}</div>
+      <div class="info"><div class="nm">${esc(it.name)}</div>
+        <div class="pr">${esc(it.category)}</div>
+      </div>
+      <input class="input priceinput" data-item="${it.id}" type="number" step="0.5" min="0" inputmode="decimal"
+        style="width:104px;text-align:right;padding:9px 11px" value="${p != null ? p : ''}"
+        placeholder="নেই" title="দাম বসালে এই দোকানে পাওয়া যাবে; খালি রাখলে নেই" />
+    </div>`;
+  };
+  // মেনু খালি থাকলে বাকিগুলো খুলেই রাখা — নইলে নতুন দোকানে করার কিছুই দেখা যায় না
+  const openRest = has.length === 0;
+  return `
+    <div class="section-title" style="margin-left:0">এই দোকানে আছে${has.length ? ` (${bn(has.length)})` : ''}</div>
+    ${has.length ? `<div class="chip-row" style="margin-bottom:10px">
+      <button class="btn sm" data-act="shopclearall">সব ঘর খালি করুন</button>
+    </div>
+    <div class="card"><div class="card-b tight">${has.map(row).join('')}</div></div>`
+      : `<div class="card"><div class="card-b"><div class="hint" style="margin:0">
+          এখনো কিছু যোগ করা হয়নি — নিচের তালিকা থেকে দাম বসালেই এই দোকানে দেখাবে।
+        </div></div></div>`}
+    ${rest.length ? `
+    <button class="btn block" data-act="shoprest" data-n="${bn(rest.length)}" style="margin-bottom:10px">
+      ${openRest ? '−' : '+'} এখানে নেই এমন জিনিস (${bn(rest.length)})</button>
+    <div id="restwrap" ${openRest ? '' : 'hidden'}>
+      <div class="hint" style="margin:0 0 8px">দাম বসালেই এই দোকানে যোগ হয়ে যাবে।</div>
+      <div class="card"><div class="card-b tight">${rest.map(row).join('')}</div></div>
+    </div>` : ''}`;
+}
+
 function shopEditSheet(id) {
   const s = id ? S.shops.find((x) => x.id === id) : { id: 0, name: '', active: 1 };
   if (!s) return;
@@ -1869,25 +1924,7 @@ function shopEditSheet(id) {
       ${id ? `<label class="check"><input type="checkbox" id="s_active" ${s.active ? 'checked' : ''} /> দোকানটা চালু আছে</label>
       <button class="btn block" data-act="newitemhere" data-id="${id}" style="margin-bottom:12px">
         + এই দোকানের নতুন আইটেম (দামসহ)</button>
-      <div class="section-title" style="margin-left:0">এই দোকানে কী কী পাওয়া যায়</div>
-      <div class="chip-row" style="margin-bottom:10px">
-        <button class="btn sm" data-act="shopclearall">সব ঘর খালি করুন</button>
-        <span class="hint" style="margin:0;align-self:center">যেগুলোর দাম বসাবেন, শুধু সেগুলোই এই দোকানে দেখাবে</span>
-      </div>
-      <div class="card"><div class="card-b tight">
-        ${items.map((it) => {
-          const p = it.shop_prices ? it.shop_prices[s.id] : null;
-          return `<div class="item ${p == null ? 'off' : ''}">
-            <div class="ava">${emojiFor(it.name)}</div>
-            <div class="info"><div class="nm">${esc(it.name)}</div>
-              <div class="pr">${esc(it.category)}</div>
-            </div>
-            <input class="input priceinput" data-item="${it.id}" type="number" step="0.5" min="0" inputmode="decimal"
-              style="width:104px;text-align:right;padding:9px 11px" value="${p != null ? p : ''}"
-              placeholder="নেই" title="দাম বসালে এই দোকানে পাওয়া যাবে; খালি রাখলে নেই" />
-          </div>`;
-        }).join('')}
-      </div></div>
+      ${priceList(s, items)}
       <div class="hint"><b>দাম বসানো = এই দোকানে পাওয়া যায়।</b> ঘর খালি রাখলে বা ০ দিলে
         এই দোকান বাছলে জিনিসটা মেনুতেই দেখাবে না — ইউজার আর স্টাফ দুজনের কাছেই।</div>`
       : `<div class="hint">দোকানটা সেভ করার পর ঠিক করবেন এখানে কী কী পাওয়া যায় আর কত দাম।
@@ -2219,6 +2256,14 @@ document.addEventListener('click', async (e) => {
           p.closest('.item')?.classList.add('off');
         });
         return toast('সব ঘর খালি করা হলো — এখন যেগুলো আছে সেগুলোর দাম বসান', 'ok');
+      case 'shoprest': {
+        // শিটটা নতুন করে আঁকা হয় না — তাহলে টাইপ করা দামগুলো মুছে যেত
+        const w = document.getElementById('restwrap');
+        if (!w) return;
+        w.hidden = !w.hidden;
+        el.textContent = `${w.hidden ? '+' : '−'} এখানে নেই এমন জিনিস (${el.dataset.n})`;
+        return;
+      }
       case 'shopdel':
         if (!confirm('দোকানটা সরিয়ে দেব? (পুরোনো অর্ডারের হিসাব থাকবে)')) return;
         await api('/api/shops/' + id, { method: 'DELETE' });
