@@ -1100,7 +1100,20 @@ function bookLabel(r) {
  * পাসবইয়ের মতো খাতা: শুরুতে কত ছিল → প্রতিটা ঘটনা → প্রতিবারের পর কত রইল → শেষে কত।
  * ২০০ জমা দিয়ে রোজ খেলে এখানেই দেখা যায় ২০০ → ১৫৫ → ১১০ → ৫০ কীভাবে নামছে।
  */
-function passbook(st, { canDelete = false } = {}) {
+/*
+ * ⚠️ এখানে এন্ট্রি মোছার বোতাম ছিল — প্রতিটা সারির কোনায় ছোট একটা ✕।
+ * ওটা তুলে দেওয়া হলো, আর কখনো ফেরত আসবে না।
+ *
+ * কারণ: টাকার হিসাব মুছে ফেলা যাবে না, কারো কথাতেও নয়। বোতামটা সারির কোনায়
+ * ভাসত (position:absolute), তাই স্ক্রল করতে গিয়ে বা সারিতে চাপ দিতে গিয়ে
+ * ভুলে লেগে যেতে পারত — আর জমা একবার মুছে গেলে ফেরানোর উপায় ছিল না
+ * (ফ্রি প্ল্যানে কোনো ব্যাকআপ নেই)।
+ *
+ * ভুল অঙ্ক বসে গেলে কী করবেন: মোছা নয় — উল্টো একটা "সমন্বয়" এন্ট্রি বসান।
+ * তাতে আসল ঘটনাটা খাতায় থেকে যায়, আর কে কখন শুধরালো সেটাও বোঝা যায়।
+ * এটাই হিসাব রাখার নিয়ম।
+ */
+function passbook(st) {
   const rows = st.rows || [];
   const sign = (v) => (v > 0 ? '+' : v < 0 ? '−' : '');
   const body = rows.map((r) => {
@@ -1112,9 +1125,6 @@ function passbook(st, { canDelete = false } = {}) {
       </div>
       <div class="pb-amt ${amt > 0 ? 'pos' : 'neg'}">${sign(amt)}${tk(Math.abs(amt))}</div>
       <div class="pb-bal ${Number(r.balance) < 0 ? 'neg' : ''}">${tk(r.balance)}</div>
-      ${canDelete && r.ledger_id && r.kind !== 'charge'
-        ? `<button class="btn sm danger pb-del" data-act="delledger" data-id="${r.ledger_id}" title="এন্ট্রি মুছুন">✕</button>`
-        : ''}
     </div>`;
   }).join('');
 
@@ -1237,7 +1247,7 @@ async function userLedgerSheet(id, tab = 'book') {
       </div>
       ${periodBar()}
       ${tab === 'book'
-        ? passbook(st, { canDelete: true })
+        ? passbook(st)
         : hist.orders.length
           ? historySummary(hist) + hist.orders.map(orderCard).join('')
           : `<div class="empty"><div class="big">🗓️</div>এই সময়ে কোনো অর্ডার নেই</div>`}`,
@@ -2708,19 +2718,8 @@ document.addEventListener('click', async (e) => {
         })) return;
         await api('/api/ledger/refund-all', { method: 'POST', body: { user_id: id } });
         toast('✅ ফেরত লেখা হয়েছে', 'ok'); closeSheet(); return userLedgerSheet(id);
-      case 'delledger': {
-        if (!await askConfirm({
-          title: 'এই এন্ট্রি মুছে ফেলবেন?',
-          body: 'টাকার খাতা থেকে একেবারে মুছে যাবে — ফেরানো যাবে না।',
-          yes: 'মুছে দিন', danger: true,
-        })) return;
-        const open = S.ledgerSheet;
-        await api('/api/ledger/' + id, { method: 'DELETE' });
-        toast('মোছা হয়েছে', 'ok');
-        // যার খাতা খোলা ছিল তারটাই আবার খুলুক — তালিকায় ফেরত গিয়ে খুঁজতে না হয়
-        if (open) return userLedgerSheet(open.id, open.tab);
-        closeSheet(); return viewMoney();
-      }
+      // 'delledger' তুলে দেওয়া হলো — টাকার এন্ট্রি মোছা যায় না। ভুল অঙ্ক
+      // শুধরাতে উল্টো একটা "সমন্বয়" বসাতে হয়, নিচের 'adjust' দিয়ে।
 
       // রিপোর্ট
       case 'quickrange':

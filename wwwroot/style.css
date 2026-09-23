@@ -687,9 +687,9 @@ textarea.input { min-height: 52px; }
 .pb-bal { color: var(--ink); }
 .pb-bal.neg { color: var(--warn); }
 .pbrow.head .pb-amt, .pbrow.head .pb-bal { font-family: inherit; font-size: 11px; color: var(--muted); }
-/* স্টাফের খাতায় জমা/ফেরত মোছার ছোট বোতাম — সারির ডানে ভাসে, কলাম নষ্ট করে না */
-.pb-del { position: absolute; right: 4px; top: 4px; padding: 1px 6px !important; font-size: 10px !important; opacity: .55; }
-.pb-del:hover { opacity: 1; }
+/* .pb-del সরানো হলো — খাতার সারির কোনায় জমা/ফেরত মোছার একটা ছোট ✕ ভাসত।
+   টাকার হিসাব মোছা যায় না (ফ্রি প্ল্যানে ব্যাকআপও নেই), আর বোতামটা এত ছোট ও
+   সারির উপরে ভাসন্ত ছিল যে স্ক্রল করতে গিয়েই ভুলে লেগে যেতে পারত। */
 
 /* বাতিল অর্ডার — ইতিহাসে থাকে, কিন্তু ফিকে */
 .card.cancelled { opacity: .62; }

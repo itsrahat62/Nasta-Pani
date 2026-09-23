@@ -1669,15 +1669,25 @@ app.MapPost("/api/ledger/refund-all", (HttpContext ctx, RefundAllReq b) =>
     return Results.Json(new { ok = true, balance = BalanceOf(uid), refunded = bal });
 });
 
+/// <summary>
+/// ⚠️ টাকার এন্ট্রি মোছা যায় না — ইচ্ছে করেই।
+///
+/// আগে এটা সত্যিই <c>DELETE FROM dbo.ledger</c> চালাত, আর খাতার প্রতিটা সারির
+/// কোনায় একটা ছোট ✕ বোতাম ছিল। ফ্রি প্ল্যানে কোনো ব্যাকআপ নেই, তাই একবার
+/// জমা মুছে গেলে ফেরানোর কোনো উপায় থাকত না — টাকার হিসাব চুপচাপ কমে যেত।
+///
+/// এন্ডপয়েন্টটা মুছে না ফেলে রাখা হলো, কারণ কারো ফোনে পুরোনো app.js ক্যাশে
+/// থেকে গেলে সেটা এখনো DELETE পাঠাতে পারে — তখন যেন কিছুই না মুছে সাফ
+/// "না" বলে দেয়।
+///
+/// ভুল অঙ্ক শুধরাতে: <c>POST /api/ledger</c> দিয়ে উল্টো একটা 'adjust' এন্ট্রি।
+/// আসল ঘটনাটা খাতায় থেকে যায়, শোধরানোটাও দেখা যায়।
+/// </summary>
 app.MapDelete("/api/ledger/{id:int}", (HttpContext ctx, int id) =>
 {
     var (_, err) = Auth(ctx, "staff"); if (err is not null) return err;
-    using var c = Db.Open();
-    var row = c.QueryFirstOrDefault("SELECT * FROM dbo.ledger WHERE id = @i", new { i = id });
-    if (row is null) return Fail(404, "এন্ট্রি নেই");
-    if ((string)row.type == "charge") return Fail(400, "অর্ডারের খরচ এখান থেকে মোছা যাবে না");
-    c.Execute("DELETE FROM dbo.ledger WHERE id = @i", new { i = id });
-    return Results.Json(new { ok = true, balance = BalanceOf((int)row.user_id) });
+    return Fail(400, "টাকার হিসাব মোছা যায় না। ভুল হলে \"সমন্বয়\" দিয়ে শুধরে নিন — "
+                   + "তাতে আসল এন্ট্রিটাও খাতায় থেকে যাবে।");
 });
 
 // =============================================================== রিপোর্ট
