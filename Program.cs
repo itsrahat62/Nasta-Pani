@@ -1690,6 +1690,45 @@ app.MapDelete("/api/ledger/{id:int}", (HttpContext ctx, int id) =>
                    + "তাতে আসল এন্ট্রিটাও খাতায় থেকে যাবে।");
 });
 
+// =============================================================== ব্যাকআপ
+/// <summary>
+/// পুরো ডেটাবেজের অবিকল কপি — এক JSON ফাইলে সব টেবিল।
+///
+/// কেন দরকার হলো: ২৩ সেপ্টেম্বরে দেখা গেল ১৭ তারিখের আগের ২৮টা অর্ডার আর
+/// ৩ জন ইউজারের পুরো হিসাব ডেটাবেজ থেকে নেই — আর ফেরানোর কোনো উপায় ছিল না।
+/// MonsterASP-র ফ্রি প্ল্যানে DB ব্যাকআপ নেই, IIS-র লগও রাখা হয় না। তাই
+/// ব্যাকআপটা অ্যাপকেই দিতে হবে।
+///
+/// রোজ একবার GitHub Actions এটা ডেকে ফাইলটা প্রাইভেট রিপোতে রেখে দেয়
+/// (.github/workflows/backup.yml)। কিছু হারালে ওই ফাইল থেকে দিনক্ষণ ধরে
+/// ফেরানো যাবে।
+///
+/// শুধু সুপার অ্যাডমিন। পাসওয়ার্ডের হ্যাশ ইচ্ছে করেই বাদ — ব্যাকআপ ফাইল
+/// কারো হাতে পড়লেও যেন কারো অ্যাকাউন্টে ঢোকা না যায়।
+/// </summary>
+app.MapGet("/api/backup", (HttpContext ctx) =>
+{
+    var (_, err) = Auth(ctx, "admin"); if (err is not null) return err;
+    using var c = Db.Open();
+    return Results.Json(new
+    {
+        taken_at = Db.Stamp(),
+        note = "নাস্তা অর্ডার — পুরো ডেটাবেজের কপি। পাসওয়ার্ড হ্যাশ এতে নেই।",
+        users = DL(c.Query(
+            @"SELECT id, name, pin, floor, default_shop_id, usual_json, role, active, created_at
+                FROM dbo.users ORDER BY id")),
+        shops = DL(c.Query("SELECT * FROM dbo.shops ORDER BY id")),
+        items = DL(c.Query("SELECT * FROM dbo.items ORDER BY id")),
+        item_options = DL(c.Query("SELECT * FROM dbo.item_options ORDER BY id")),
+        item_prices = DL(c.Query("SELECT * FROM dbo.item_prices ORDER BY item_id, shop_id")),
+        orders = DL(c.Query("SELECT * FROM dbo.orders ORDER BY id")),
+        order_lines = DL(c.Query("SELECT * FROM dbo.order_lines ORDER BY id")),
+        ledger = DL(c.Query("SELECT * FROM dbo.ledger ORDER BY id")),
+        day_status = DL(c.Query("SELECT * FROM dbo.day_status ORDER BY id")),
+        settings = DL(c.Query("SELECT * FROM dbo.settings")),
+    });
+});
+
 // =============================================================== রিপোর্ট
 app.MapGet("/api/report", (HttpContext ctx, string? from, string? to, string? floor) =>
 {
