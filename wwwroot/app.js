@@ -291,8 +291,14 @@ function askConfirm({ title, body = '', yes = 'হ্যাঁ', no = 'না, �
 async function boot() {
   try {
     S.boot = await api('/api/bootstrap');
-  } catch {
-    $('#app').innerHTML = `<div class="empty"><div class="big">📴</div>সার্ভারে যাওয়া যাচ্ছে না</div>`;
+  } catch (e) {
+    // সার্ভার কারণটা বলে দিলে সেটাই দেখানো হয় — আগে সব ভুলের জন্য একই
+    // "সার্ভারে যাওয়া যাচ্ছে না" লেখা উঠত, আর আসল কথাটা ফেলে দেওয়া হতো।
+    // (যেমন "ডেটাবেজে পৌঁছানো যাচ্ছে না" — শুনলেই বোঝা যায় কী করতে হবে।)
+    const why = e && e.message && e.message !== 'সমস্যা হয়েছে'
+      ? e.message : 'সার্ভারে যাওয়া যাচ্ছে না — ইন্টারনেট ঠিক আছে কি দেখুন।';
+    $('#app').innerHTML = `<div class="empty"><div class="big">📴</div>${esc(why)}
+      <div style="margin-top:14px"><button class="btn primary" data-act="reload">আবার চেষ্টা করুন</button></div></div>`;
     return;
   }
   S.date = S.date || S.boot.today;
@@ -2266,6 +2272,8 @@ document.addEventListener('click', async (e) => {
     switch (act) {
       case 'authtab': S.authTab = el.dataset.k; return renderAuth();
       case 'closesheet': return closeSheet();
+      // সার্ভারে পৌঁছানো যায়নি এমন পাতায় "আবার চেষ্টা করুন"
+      case 'reload': return location.reload();
       case 'tab':
         closeSheet();
         if (S.dirty && S.tab === 'order' && !await askConfirm({

@@ -3,7 +3,9 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Dapper;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.StaticFiles;
+using Microsoft.Data.SqlClient;
 using NastaOrder;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -77,6 +79,45 @@ if (cs is not null)
         Console.WriteLine($"⚠️ শুরুতেই ডেটাবেজে পৌঁছানো গেল না: {ex.Message}");
     }
 }
+
+// --------------------------------------------------- কোথাও ভাঙলে কী হবে
+//
+// আগে কোনো এন্ডপয়েন্টে অপ্রত্যাশিত ভুল হলে IIS একটা খালি ৫০০ ফেরত দিত —
+// কোনো JSON নয়, কোনো কথা নয়। ফ্রন্টএন্ডের api() সেটা পড়তে না পেরে শুধু
+// "সমস্যা হয়েছে" দেখাত, আর আসল কারণ কোথাও থাকত না। ঠিক সেই রোগ, যার জন্য
+// ১৪ অক্টোবরের 500.30 খুঁজতে এত সময় গেছে।
+//
+// এখন: ব্যবহারকারী পায় সাফ বাংলা JSON, আর পুরো exception-টা stdout লগে যায়।
+// ডেটাবেজে পৌঁছানোর সমস্যা হলে DB-কে "খারাপ" ধরে নেওয়া হয়, যাতে পরের
+// রিকোয়েস্টে আবার জোড়া লাগানোর চেষ্টা হয়।
+app.UseExceptionHandler(branch => branch.Run(async ctx =>
+{
+    var ex = ctx.Features.Get<IExceptionHandlerPathFeature>()?.Error;
+    Console.WriteLine($"❌ {ctx.Request.Method} {ctx.Request.Path} — {ex}");
+
+    var dbTrouble = ex is SqlException
+        || (ex?.InnerException is SqlException)
+        || ex is InvalidOperationException { Message: var m } && m.Contains("connection", StringComparison.OrdinalIgnoreCase);
+    if (dbTrouble && ex is not null)
+    {
+        lock (dbLock) { dbError = ex.Message; dbTriedAt = DateTimeOffset.MinValue; }
+    }
+
+    // পাঠানো তথ্যই বেঠিক হলে দোষটা সার্ভারের নয় — ৪০০, আর কথাটাও আলাদা।
+    // (যেমন সংখ্যার ঘরে অক্ষর গেলে মডেল বাইন্ডার BadHttpRequestException ছোড়ে।)
+    var badInput = ex is BadHttpRequestException || ex is JsonException;
+
+    ctx.Response.StatusCode = dbTrouble ? 503 : badInput ? 400 : 500;
+    ctx.Response.ContentType = "application/json; charset=utf-8";
+    await ctx.Response.WriteAsJsonAsync(new
+    {
+        error = dbTrouble
+            ? "ডেটাবেজে পৌঁছানো যাচ্ছে না — একটু পরে আবার চেষ্টা করুন।"
+            : badInput
+                ? "যা পাঠানো হয়েছে তাতে গোলমাল আছে — পাতাটা একবার রিফ্রেশ করে আবার চেষ্টা করুন।"
+                : "সার্ভারে একটা গোলমাল হয়েছে — আবার চেষ্টা করুন। বারবার হলে জানান।",
+    });
+}));
 
 // ------------------------------------------------------------- স্ট্যাটিক ফাইল
 var ctp = new FileExtensionContentTypeProvider();
