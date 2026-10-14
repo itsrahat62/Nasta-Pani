@@ -18,17 +18,109 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 var app = builder.Build();
 
 // ------------------------------------------------------------- ডেটাবেজ
+//
+// ⚠️ এখানে আগে ব্যর্থ হলেই throw করা হতো — আর তাতে পুরো সাইট মরে যেত।
+//
+// ১৪ অক্টোবর ২০২৬-এ ঠিক সেটাই হলো: ডেটাবেজে পৌঁছানো যাচ্ছিল না, অ্যাপ
+// স্টার্টআপেই ক্র্যাশ করল, আর hostingModel="inprocess" বলে স্ট্যাটিক ফাইলসহ
+// সব কিছু "HTTP Error 500.30 — ASP.NET Core app failed to start" দেখাতে লাগল।
+// ওই পাতাটা আসল কারণের কিছুই বলে না, আর stdout লগও বন্ধ ছিল।
+//
+// এখন: কানেকশন না পেলে অ্যাপ তবু চালু হয়। পাতাটা খোলে, আর API সাফ বাংলায়
+// বলে দেয় কী সমস্যা। প্রতি রিকোয়েস্টে আবার চেষ্টা করা হয় (১৫ সেকেন্ড পরপর),
+// তাই ডেটাবেজ ফিরে এলে সাইট নিজে থেকেই ঠিক হয়ে যায় — নতুন ডিপ্লয় লাগে না।
 var cs = Pick(builder.Configuration.GetConnectionString("Default"))
-         ?? Pick(Environment.GetEnvironmentVariable("NASTA_DB"))
-         ?? throw new InvalidOperationException(
-             "ডেটাবেজ কানেকশন স্ট্রিং নেই। appsettings.Production.json অথবা NASTA_DB এনভায়রনমেন্ট ভ্যারিয়েবলে দিন।");
-Db.Init(cs);
+         ?? Pick(Environment.GetEnvironmentVariable("NASTA_DB"));
+
+string? dbError = cs is null
+    ? "ডেটাবেজ কানেকশন স্ট্রিং নেই। appsettings.Production.json অথবা NASTA_DB এনভায়রনমেন্ট ভ্যারিয়েবলে দিন।"
+    : null;
+DateTimeOffset dbTriedAt = DateTimeOffset.MinValue;
+var dbLock = new object();
+
+bool DbReady()
+{
+    if (dbError is null && cs is not null) return true;
+    if (cs is null) return false;
+    lock (dbLock)
+    {
+        if (dbError is null) return true;
+        // বারবার চেষ্টা করে সার্ভার ব্যস্ত করার মানে নেই — ১৫ সেকেন্ডে একবার
+        if (DateTimeOffset.UtcNow - dbTriedAt < TimeSpan.FromSeconds(15)) return false;
+        dbTriedAt = DateTimeOffset.UtcNow;
+        try
+        {
+            Db.Init(cs);
+            dbError = null;
+            Console.WriteLine("✅ ডেটাবেজে আবার পৌঁছানো গেছে");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            dbError = ex.Message;
+            Console.WriteLine($"⚠️ ডেটাবেজে পৌঁছানো যাচ্ছে না: {ex.Message}");
+            return false;
+        }
+    }
+}
+
+if (cs is not null)
+{
+    try
+    {
+        Db.Init(cs);
+    }
+    catch (Exception ex)
+    {
+        dbError = ex.Message;
+        dbTriedAt = DateTimeOffset.UtcNow;
+        Console.WriteLine($"⚠️ শুরুতেই ডেটাবেজে পৌঁছানো গেল না: {ex.Message}");
+    }
+}
 
 // ------------------------------------------------------------- স্ট্যাটিক ফাইল
 var ctp = new FileExtensionContentTypeProvider();
 ctp.Mappings[".webmanifest"] = "application/manifest+json";
 app.UseDefaultFiles();
 app.UseStaticFiles(new StaticFileOptions { ContentTypeProvider = ctp });
+
+// ডেটাবেজ না থাকলে API সাফ করে বলে দেয়, 500.30-র ফাঁকা পাতা নয়।
+// /api/health বাদ — ওটা দিয়েই তো অবস্থা জানতে হবে।
+app.Use(async (ctx, next) =>
+{
+    var path = ctx.Request.Path.Value ?? "";
+    if (path.StartsWith("/api/", StringComparison.Ordinal)
+        && !path.StartsWith("/api/health", StringComparison.Ordinal)
+        && !DbReady())
+    {
+        ctx.Response.StatusCode = 503;
+        await ctx.Response.WriteAsJsonAsync(new
+        {
+            error = "ডেটাবেজে পৌঁছানো যাচ্ছে না — একটু পরে আবার চেষ্টা করুন। "
+                  + "সমস্যা থাকলে হোস্টিং প্যানেলে ডেটাবেজটা চালু আছে কি না দেখুন।",
+        });
+        return;
+    }
+    await next();
+});
+
+/// <summary>
+/// অ্যাপ ও ডেটাবেজ কেমন আছে — লগইন ছাড়াই দেখা যায়।
+/// ডেটাবেজ মরে গেলে 500.30-র ফাঁকা পাতা কিছুই বলে না, তাই আসল ভুলের কথাটা
+/// এখানে পাওয়া যায়। গোপন কিছু ফেরত দেওয়া হয় না — কানেকশন স্ট্রিং তো নয়ই।
+/// </summary>
+app.MapGet("/api/health", () =>
+{
+    var ok = DbReady();
+    return Results.Json(new
+    {
+        ok,
+        db = ok ? "ঠিক আছে" : "পৌঁছানো যাচ্ছে না",
+        error = ok ? null : dbError,
+        has_connection_string = cs is not null,
+        server_time = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(6)).ToString("yyyy-MM-dd HH:mm:ss"),
+    }, statusCode: ok ? 200 : 503);
+});
 
 // ------------------------------------------------------------- হেল্পার
 const string COOKIE = "nasta_sid";
